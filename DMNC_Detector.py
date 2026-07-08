@@ -21,8 +21,10 @@
 #          I am assuming the photons decay nearly instantly, so I do not need to propagate the
 #               dark matter while decay occurs. This allows me to generate the locations of
 #               interaction first and then generate photons afterward, which is convenient.
-
-
+# 7/7/2026: Updated code for new Rates class. 
+# Changed photon generation function: 
+# (1) To generate the energy momentum 4 vector of every photon produced in place of old photon energy list.
+# (2) Seperated photon emissions into list based on capture location.
 # Packages***********************************************************
 import matplotlib.pyplot as plt
 import numpy as np
