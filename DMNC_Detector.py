@@ -24,12 +24,15 @@
 
 
 # Packages***********************************************************
+from calendar import c
 import matplotlib.pyplot as plt
 import numpy as np
 import random as rand
 import time
-from DMNC_Rates import *
+import DMNC_Rates as rts
 
+
+rates = rts.Rates()
 # Class**************************************************************
 class Detector:
     def __init__(self, length, width, height, num_density, cross_section_cm, cross_sec_dict):
@@ -45,7 +48,7 @@ class Detector:
         self.z_min = -height / 2
         self.z_max = height / 2
         
-        # Calculate area to randomly weight the entrance location
+        # Calculate area to randomly weight the entrance location (LW/LW+LH+WH gives probability of entering that face if each unit area has equal probability)
         self.area_x = height * width
         self.area_y = height * length
         self.area_z = width * length
@@ -67,15 +70,14 @@ class Detector:
         # Dictionary with keys: capture location, values: state
         self.capture_locs = {}
         
-        # List of photon energies (will add 4-vector later)
-        self.photon_energy_list = []             # GeV
-        
+        # List of photon 4-vectors        
+        self.phot_4_vec_list = []           # GeV
         # Parameters important to scattering
         self.num_density = num_density
         self.xsec_cm = cross_section_cm
         self.xsec_dict = cross_sec_dict
-        
-        
+
+
     def random_face(self):
         '''Randomly select which face DM will enter the detector
            through, using the dimensions the object was given.
@@ -217,23 +219,30 @@ class Detector:
            the keys of self.capture_locs
            
            Returns: N/A: stores energies in self.photon_energy_list'''
-        
         if len(self.capture_locs) == 0:
             # No decays to be done
             return
         for location in self.capture_locs.keys():
+            phot_4_vec_list_curr_capture = []
             q_state = self.capture_locs[location]
             n = q_state[0]
             l = q_state[1]
             m = q_state[2]
-            photon_energy = EB(n, l)
-            self.photon_energy_list.append(photon_energy)
+            photon_energy = rates.EB(n, l)
+            photon_ct, photon_phi = rates.sample_S_ctq_phiq(n,l,m)
+            sin = (1 - photon_ct**2)**(0.5)
+            phot_ux = photon_energy * sin * np.cos(photon_phi)
+            phot_uy = photon_energy * sin * np.sin(photon_phi)
+            phot_uz = photon_energy * photon_ct
+            phot_4_vec = (photon_energy,phot_ux,phot_uy,phot_uz)
+            phot_4_vec_list_curr_capture.append(phot_4_vec)
             # For now have a limited range just in case
+            done = False
             for i in range(1000):
                 if n <= 1:
                     break
                 
-                decay_dict = Gamma_tot_B(n, l, m)
+                decay_dict = rates.Gamma_tot_B(n, l, m)
                 # Can be used to make sure we're below ns time
                 total_decay_rate = sum_dict_vals(decay_dict)
                 new_state = key_val_by_weight(decay_dict)[0]
@@ -241,8 +250,19 @@ class Detector:
                 new_l = new_state[1]
                 new_m = new_state[2]
                 
-                photon_energy = q(n, l, new_n, new_l)
-                self.photon_energy_list.append(photon_energy)
+                photon_energy = rates.q(n, l, new_n, new_l)
+                #for testing purposes; One is commented out at a time to see which is faster and if both produce the same results:
+                photon_ct, photon_phi = rates.sample_ctq_phi(m,new_m)
+                photon_ct = photon_ct.real
+                photon_phi = photon_phi.real
+                #photon_ct, photon_phi = rates.sample_B_ctq_phiq(n,l,m,new_n,new_l,new_m)
+                #########################################################################
+                sin = (1 - photon_ct**2)**(0.5)
+                phot_ux = photon_energy * sin * np.cos(photon_phi)
+                phot_uy = photon_energy * sin * np.sin(photon_phi)
+                phot_uz = photon_energy * photon_ct
+                phot_4_vec = (photon_energy,phot_ux,phot_uy,phot_uz)
+                phot_4_vec_list_curr_capture.append(phot_4_vec)
                 
                 # Update quantum numbers for next loop iteration
                 n = new_n
@@ -251,8 +271,8 @@ class Detector:
                 
                 if i == 999:
                     print('ATTENTION: Did not finish decay. n =', n)
-
-                    
+            self.phot_4_vec_list.append(phot_4_vec_list_curr_capture)
+        
 # Functions**********************************************************
 
 def sum_dict_vals(dictionary):
