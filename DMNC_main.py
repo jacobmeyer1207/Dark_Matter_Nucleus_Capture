@@ -4,8 +4,7 @@ import numpy as np
 import random as rand
 import time
 import pandas as pd
-from scipy.stats import ks_2samp
-from scipy.stats import wasserstein_distance
+import pyhepmc as hp
 
 import pip
 print(pip.__version__) 
@@ -17,8 +16,6 @@ import DMNC_Detector as dmnc_det     # Comes with plt, np, rand, time
 
 import DMNC_Rates as rts   # Access to many fundamental calculations
 rates = rts.Rates()
-
-
 # Functions**********************************************************
 
 def sum_dict_vals(dictionary):
@@ -80,16 +77,64 @@ det_length = 62                        # meters
 det_width = 15.1                       # meters
 det_height = 14                        # meters
 
-# FIXME: R value from Rates is used, not this one. I think I'll have
-# to turn Rates into a class so I can modify values.
-R = 10                                 # DM radius, GeV^-1
-x_sec_dict = rates.xsec_v_tot_S()            # keys: states, vals: X sects
+########################################################################## LOOK INTO THIS #TODO ###############################
+# typical jump size, difference between point heights should be exactly the energy levels of the photons (q function calculates this!)
+# perhaps plot the theoretical q from the math for all n,l transitions, then compare to the sampling data.
+x_sec_dict = rates.xsec_v_tot_S() # keys: states, vals: X sects
 xsec_tot = sum_dict_vals(x_sec_dict)   # Total cross section, GeV^-2
+largest_state = max(x_sec_dict.items(), key=lambda x: x[1])
+
+
+
+
+#Testing for proper rates.xsec_v_tot_s() functionality, plots vs R
+'''
+searches = [np.arange(9, 11, .01)]
+for j in searches:
+    print("beginning task")
+    i_list = []
+    sec_list = []
+    sec_len_list = []
+    for i in j:
+        rates = rts.Rates(R = i)
+        x_sec_dict = rates.xsec_v_tot_S() # keys: states, vals: X sects
+        xsec_tot = sum_dict_vals(x_sec_dict)   # Total cross section, GeV^-2
+        largest_state = max(x_sec_dict.items(), key=lambda x: x[1])
+
+        print(
+                "radius:",rates.radius,
+                "largest state:",largest_state[0],     # (n,l,m)
+                "cross-section:",largest_state[1],     # cross section
+                "total cross-section",xsec_tot,
+                "fraction of total:",largest_state[1]/xsec_tot,
+                "average cross-section:",xsec_tot/len(x_sec_dict)
+            )
+
+        sec_len_list.append(len(x_sec_dict))
+        i_list.append(i)
+        sec_list.append(xsec_tot)
+    maxS = max(sec_list)
+    print("max cross section:",maxS)
+    print("associated R value:",i_list[sec_list.index(maxS)])
+    print("average cross section:", sum(sec_list)/len(sec_list))
+    plt.plot(i_list,sec_list,'.')
+    plt.yscale('log')
+    plt.xlabel('R value')
+    plt.ylabel('cross-section total')
+    plt.show()
+    plt.plot(sec_len_list, sec_list,'.')
+    plt.yscale('log')
+    plt.xlabel('length of cross section list')
+    plt.ylabel('cross-section total')
+    plt.show()
+''' 
 
 # hc is 1240 eV * nm: e-9 for eV -> GeV, e-7 for nm -> cm
 cm_from_inv_gev = 1240 / (2 * np.pi) * 1e-16
 
 xsec_cm = xsec_tot * cm_from_inv_gev**2  # Total cross section, cm^2
+
+###############################################################################################################################
 
 # Number density of Liquid Argon, cm^-3:
 num_density_LAr = 1.39 * 6.02e23 / 39.948
@@ -128,63 +173,81 @@ for i in range(1000):
 
 '''
 
+def Gen_DM_particle_event():
+    i = 0
+    while True:
+        i += 1
+        try:
+            det = dmnc_det.Detector(det_length, det_width, det_height, num_density_LAr, xsec_cm, x_sec_dict)
+            det.random_entrance()
+            det.gen_capture_locs()
+            event = det.photon_generation()
+            print("Captures:", len(det.capture_locs))
+            print("number of failed captures:", i)
+            print("Cross-section of capture in cm:", xsec_cm)
+            return(event)
+        except ValueError as ex:
+            continue
 
-def Capture_stats():
-    det = dmnc_det.Detector(det_length, det_width, det_height, num_density_LAr, xsec_cm, x_sec_dict)
-    avg_phot_energy_list = []
-    decay_num_list = []
-    det.random_entrance()
-    det.gen_capture_locs()
     
+def Capture_stats():
     start_time = time.monotonic()
-
-    det.photon_generation()
+    event = Gen_DM_particle_event()
     end_time = time.monotonic()
     duration = end_time - start_time
     print('Time to generate all decays:', format_seconds(duration))
-    capture_num = len(det.capture_locs.items())
-    if capture_num > 0:
-        for i in det.phot_4_vec_list:
-            curr_avg_photon_energy = 0
-            curr_decay_num = len(i)
-            for j in i:
-                curr_avg_photon_energy += j[0]
-            curr_avg_photon_energy /= curr_decay_num
-            avg_phot_energy_list.append(curr_avg_photon_energy)
-            decay_num_list.append(curr_decay_num)
-        return(det.phot_4_vec_list, capture_num, decay_num_list, duration, avg_phot_energy_list, det.capture_locs)
+    capture_num = len(event.vertices)
+    graph_data(event)
+    print_event_summary(event)
+
+def print_event_summary(event):
+    print(event)
+    '''print(f"Event {event.event_number}")
+    print(f"Particles: {len(event.particles)}")
+    print(f"Vertices : {len(event.vertices)}")
+    print(f"Weights  : {event.weights}")
+    print(f"Momentum units: {event.momentum_unit}")
+    print(f"Length units  : {event.length_unit}")
+    '''
+
+#plot in terms of n and l the photon energies
+def graph_data(event):
+    particle_e_list = []
+    for particle in event.particles:
+        if particle.pid == 22:
+            particle_e_list.append(particle.momentum.e)
+    plt.hist(particle_e_list, bins = int(np.sqrt(len(particle_e_list))))
+    plt.xlabel("Photon Energy")
+    plt.ylabel("Number of Photons")
+    plt.show()
+
+Capture_stats()
+####Testing photon energy generation sampling#########################
+'''
+def plot_energies(n, T_phot_e):
+    if(n > 1):
+        T_data_n_l_trans = []
+        for i in range(n-1):
+            curr_T_phot_e = rates.EB(n,i)
+            T_phot_diff = T_phot_e - curr_T_phot_e
+            T_data_n_l_trans.append(T_phot_diff)
+            T_phot_e = curr_T_phot_e
+        print(len(T_data_n_l_trans))
+        plt.plot(T_data_n_l_trans, range(n-1), '.')
+        T_phot_e = rates.EB(n-1,0)
+        plot_energies(n-1, T_phot_e)
     else:
-        print("failed a capture")
-        return Capture_stats()
+        return("done")
+T_phot_e = rates.EB(85,0)
+print(plot_energies(85, T_phot_e))
+plt.show()
+'''
 
 
-def HepMC_data():
-    data = Capture_stats()
-    capture_locs = list(data[5].keys())
-    j = 1
-    for i in data[0]:
-        E = 0
-        px = 0
-        py = 0
-        pz = 0
-        print("Event:", j)
-        print("Units: GeV, Meters")
-        print("Vertex:", capture_locs[j-1]) #meters from the origin
-        l = 1
-        for k in i:
-            print("photon ", l, ", 4-vector:", k)
-            E += k[0]
-            px += k[1]
-            py += k[2]
-            pz += k[3]
-            l += 1
-        avg_vec = [E/len(i), px/len(i), py/len(i), pz/len(i)]
-        print("average photon 4-vector:", avg_vec)
-        print("Capture of Argon atom produced", data[2][j-1],"photons.")
-        j+=1
 
-HepMC_data()
-####Testing methods of sampling angles######################
+
+####Testing methods of sampling angles################################
+#do simple histogram test
 '''
 det = dmnc_det.Detector(det_length, det_width, det_height, num_density_LAr, xsec_cm, x_sec_dict)
 det.gen_capture_locs()
@@ -202,12 +265,18 @@ lf = new_state[1]
 mf = new_state[2]
 cos_inv = 0
 cos_rej = 0
-for i in range(10):
-    cos_inv += rates.sample_ctq_phi(mi,mf)[0]
-    cos_rej += rates.sample_B_ctq_phiq(ni,li,mi,nf,lf,mf)[0]
-cos_inv /= 10
-cos_rej /= 10
-print(cos_inv, cos_rej)
+for i in range(5000):
+    cos_inv = rates.sample_ctq_phi(mi,mf)[0]
+    cos_rej = rates.sample_B_ctq_phiq(ni,li,mi,nf,lf,mf)[0]
+    Rejection_samples.append(cos_rej)
+    Inversion_samples.append(cos_inv)
+plt.hist(Inversion_samples, alpha=0.5, label='Inversion sampling', bins = 65)
+
+plt.hist(Rejection_samples, alpha=0.5, label='Rejection sampling', bins = 65)
+
+plt.legend(loc='upper right')
+plt.title('Inverse transform sampling vs Rejection sampling')
+plt.show()
 '''
 
 
