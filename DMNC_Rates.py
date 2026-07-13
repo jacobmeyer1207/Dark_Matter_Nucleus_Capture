@@ -14,20 +14,20 @@ from mpmath import besseljzero
 # binomial coefficients that appear in spherical harmonics products
 from scipy.special import comb
 
-# Class **************************************************************************
+# MARK: Class **************************************************************************
 class Rates:
-    def __init__(self, Z = 18, A = 40, mu_mult = .938, V0_mult = .246, k_mult = .001, R = 10.0):
+    def __init__(self, Z = 18, A = 40, mu_mult = .938, V0_mult = .246, velDM = .001, R = 10):
     ################################################################################
     # PARAMETERS
     ################################################################################
-
+        
         self.Z = Z                                  # material atomic number
         self.A = A                                  # material mass number
         self.e = np.sqrt(4.0 * np.pi / 137)         # electric charge, dimensionless
         self.mu = A * mu_mult                       # nucleus (reduced) mass, GeV
-        self.V0 = A * V0_mult                       # potential depth, GeV
-        self.k = k_mult * self.mu                   # incoming DM momentum, GeV
-        self.R = R                                  # DM radius, GeV^-1
+        self.V0 = A * V0_mult                       # potential depth, GeV (A* expectation value of the higgs)
+        self.k = velDM * self.mu                    # incoming DM momentum, GeV (What? mu is the Argon's reduced mass... TODO: check this vs all new uses)
+        self.radius = R                             # DM radius, GeV^-1
         self.levels = {}                            # cache for energy levels
         # For States**************************************************************
         self.kapS = np.sqrt(self.k**2 + 2.0 * self.mu * self.V0)   # interior momentum for scattering, GeV
@@ -51,7 +51,7 @@ class Rates:
 
     # momentum inside potential well for bound state, GeV
     def kapB(self,n,l):
-        return self.spherical_jnz(l,n) / self.R
+        return self.spherical_jnz(l,n) / self.radius
     # (positive) binding energy for state, GeV
     def EB(self,n,l):
         try:
@@ -62,7 +62,6 @@ class Rates:
                 self.levels[(n,l)] = res
             return res
     # emitted photon energy/momentum, GeV
-    # REVISED: instead of if - EB(ni,li) + EB(nf,lf) <= 0 and return - EB(ni,li) + EB(nf,lf), see below.
     def q(self,ni,li,nf,lf):
         try:
             return self.levels[(ni,li,nf,lf)]
@@ -76,7 +75,7 @@ class Rates:
 
     # Maximum n allowed to have bound states below top of potential
     def nmax(self,l,Emin):
-        res = int(np.ceil((np.sqrt(2.0*self.mu*self.V0)*self.R)/np.pi - 0.5 * l))
+        res = int(np.ceil((np.sqrt(2.0*self.mu*self.V0)*self.radius)/np.pi - 0.5 * l))
         while res > 0 and self.EB(res,l) < Emin:
             res -= 1
         while res + 1 > 0 and self.EB(res+1,l) > Emin:
@@ -85,12 +84,12 @@ class Rates:
 
     # normalization for bound state, GeV^-3/2
     def NB(self,n,l):
-        normint = -0.25*(np.pi*self.R**3*jv(-0.5 + l,self.spherical_jnz(l,n))*jv(1.5 + l,self.spherical_jnz(l,n)))/self.spherical_jnz(l,n)
+        normint = -0.25*(np.pi*self.radius**3*jv(-0.5 + l,self.spherical_jnz(l,n))*jv(1.5 + l,self.spherical_jnz(l,n)))/self.spherical_jnz(l,n)
         return 1.0/np.sqrt(normint)
     # boundary conditions for scattering state
     def bcs(self,Ns,delta,l):
-        return ((np.cos(delta) * spherical_jn(l,self.k*self.R) + np.sin(delta) * spherical_yn(l,self.k*self.R)) - Ns * spherical_jn(l,self.kapS*self.R),
-                (np.cos(delta) * self.k * self.spherical_jnp(l,self.k*self.R) + np.sin(delta) * self.k * self.spherical_ynp(l,self.k*self.R)) - Ns * self.kapS * self.spherical_jnp(l,self.kapS*self.R))
+        return ((np.cos(delta) * spherical_jn(l,self.k*self.radius) + np.sin(delta) * spherical_yn(l,self.k*self.radius)) - Ns * spherical_jn(l,self.kapS*self.radius),
+                (np.cos(delta) * self.k * self.spherical_jnp(l,self.k*self.radius) + np.sin(delta) * self.k * self.spherical_ynp(l,self.k*self.radius)) - Ns * self.kapS * self.spherical_jnp(l,self.kapS*self.radius))
     # solve boundary conditions to get interior normalization, dimensionless
     def NS(self,l):
         return 4.0*np.pi*1j**l * fsolve(lambda x : self.bcs(x[0],x[1],l),(1.0,0.3))[0]
@@ -107,18 +106,18 @@ class Rates:
 
     # general radial integral
     def rad_int(self,Ri,kapi,li,Rf,kapf,lf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
-        if kapi*self.R < approx_threshold or kapf*self.R < approx_threshold or force_full:
+        if kapi*self.radius < approx_threshold or kapf*self.radius < approx_threshold or force_full:
             print('Calculating full radial integral... may be slow')
-            subinterval_lim = max(50,int(np.ceil(max(kapi*self.R,kapf*self.R)/subinterval_periods)))
-            rad_int_full = quad(lambda r : Ri(r)*Rf(r)*r**3,0,self.R,limit=subinterval_lim)
+            subinterval_lim = max(50,int(np.ceil(max(kapi*self.radius,kapf*self.radius)/subinterval_periods)))
+            rad_int_full = quad(lambda r : Ri(r)*Rf(r)*r**3,0,self.radius,limit=subinterval_lim)
             if rad_int_full[1] > 0.01 * abs(rad_int_full[0]):
                 print('Error on radial integral greater than 1%')
             res = rad_int_full[0]
         else:
             kap_sum = kapi + kapf
             kap_dif = kapi - kapf
-            kap_sum_R = kap_sum*self.R
-            kap_dif_R = kap_dif*self.R
+            kap_sum_R = kap_sum*self.radius
+            kap_dif_R = kap_dif*self.radius
             res =  -kap_dif**2 * (-1)**((1+lf+li)/2) * (kap_sum_R*np.cos(kap_sum_R) - np.sin(kap_sum_R))
             res += kap_sum**2 * (-1)**((1+li-lf)/2) * (kap_dif_R*np.cos(kap_dif_R) - np.sin(kap_dif_R))
             res /= 2.0 * kapi * kapf * kap_sum**2 * kap_dif**2
@@ -185,7 +184,7 @@ class Rates:
     def amp_S(self,nf,lf,mf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
         res = np.array([0.,0.,0.],dtype='complex128')
         for li in [lf-1,lf+1]:
-            if li < 0 or self.k*self.R < li:
+            if li < 0 or self.k*self.radius < li:
                 continue
             res += self.Z * self.e * (self.EB(nf,lf) + self.k**2/(2.0 * self.mu)) * self.NS(li) * self.NB(nf,lf) * np.sqrt((2.0*li+1)/(4.0*np.pi)) * self.rad_int_S(li,nf,lf,force_full,subinterval_periods,approx_threshold) * self.ang_int(li,0,lf,mf)
         return res
@@ -273,14 +272,17 @@ class Rates:
     '''parallelize TODO'''
     def Gamma_tot_B(self,n,l,m,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
         res = {}
+        #task_list = []
         for lf in [l-1,l+1]:
             if lf < 0:
                 continue
             nf = self.nmax(lf,self.EB(n,l))
-            while nf > 0 and self.q(n,l,nf,lf)*self.R < np.pi:
-                for mf in range(m-1,m+1):
+            while nf > 0 and self.q(n,l,nf,lf)*self.radius < np.pi:
+                for mf in range(m-1,m+2):
                     if mf > lf or mf < -lf:
                         continue
+                    #parallelizing in the future
+                    #task_list.append([n,l,m,nf,lf,mf])
                     rate = self.Gamma_B(n,l,m,nf,lf,mf,force_full,subinterval_periods,approx_threshold)
                     res[(nf,lf,mf)] = rate
                 nf -= 1
@@ -310,16 +312,20 @@ class Rates:
         return np.real(self.EB(nf,lf) * self.pol_tensor_int * np.linalg.multi_dot([np.conjugate(amp),amp]) / (8.0 * np.pi**2))
 
     # cross section to all allowed states in GeV^-2
-    '''parallelize TODO maybe'''
+    # Possible revisions of xsec_v_tot_S will be written as comments within the function. Assuming that total should include n < nmax along with other quantum numbers for corrections 
     def xsec_v_tot_S(self,force_full = False, subinterval_periods = 8.0, approx_threshold = 10.0):
         res = {}
-        for lf in range(int(np.ceil(self.k*self.R)) + 1):
-            nf = self.nmax(lf,0.)
-            for mf in range(-1,2):
-                if mf < -lf or mf > lf:
-                    continue
-                xsec_v = self.xsec_v_S(nf,lf,mf,force_full,subinterval_periods,approx_threshold)
-                res[(nf,lf,mf)] = xsec_v
+        for lf in range(int(np.ceil(self.k*self.radius)) + 1):
+            nf = self.nmax(lf,0.) 
+            #new code. accounts for nf<nmax that satisfies conditions. higher cross-section for many values of R.
+            while nf > 0 and (self.EB(nf,lf) + self.k**2/(2*self.mu))*self.radius < np.pi:
+                for mf in range(-1,2):
+                    if mf > lf or mf < -lf:
+                        continue
+                    xsec_v = self.xsec_v_S(nf,lf,mf,force_full,subinterval_periods,approx_threshold)
+                    res[(nf,lf,mf)] = xsec_v
+                nf -= 1
+            
         return res
 
     ################################################################################
