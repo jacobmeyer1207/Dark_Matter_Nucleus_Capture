@@ -21,15 +21,23 @@
 #          I am assuming the photons decay nearly instantly, so I do not need to propagate the
 #               dark matter while decay occurs. This allows me to generate the locations of
 #               interaction first and then generate photons afterward, which is convenient.
+# 7/9/2026: Jacob Meyer now working on this code along with Joshua Berger and Zack Orr. Recent additions to the code include
+#   the generation of momentum energy 4-vectors in photon generation and the switch to pyhepmc for storing event data. 
+#   Main and Rates were changed to include caching for photon energies, rejection sampling for bound and scattering state captures,
+#   a function generating various statistics from capture data, and basic plotting of photon energies generated for each capture. 
+#   Currently testing Inverse transform sampling for cos(theta) angle of outgoing photons against rejection sampling method to ensure usability.
+
+
 
 
 # Packages***********************************************************
+from calendar import c
 import matplotlib.pyplot as plt
 import numpy as np
 import random as rand
 import time
 import DMNC_Rates as rts
-
+import pyhepmc as hp
 
 rates = rts.Rates()
 # Class**************************************************************
@@ -65,16 +73,18 @@ class Detector:
         self.ux = 0
         self.uy = 0
         self.uz = 0
+        self.time = 0
         
         # Dictionary with keys: capture location, values: state
         self.capture_locs = {}
         
-        # List of photon 4-vectors        
-        self.phot_4_vec_list = []           # GeV
         # Parameters important to scattering
         self.num_density = num_density
         self.xsec_cm = cross_section_cm
         self.xsec_dict = cross_sec_dict
+        # Arbitrary PID number for HepMC formatting.
+        self.QBALL_PID = 1000000001
+        self.BOUND_QBALL_AR_PID = 1000000002
 
 
     def random_face(self):
@@ -179,89 +189,114 @@ class Detector:
            
            This method will call "random_entrance()"
            if it hasn't been called yet.
-        
-           Returns: N/A: stores locations in self.capture_locs'''
-        
+            
+           Returns: N/A: stores locations in self.capture_locs
+           
+           #ASSUMES LOSS OF ENERGY AND MOMENTUM UPON CAPTURE IS NEGLIGIBLE#
+           '''
         if (self.ux == 0 and self.uy == 0 and self.uz == 0):
             self.random_entrance()
         
         # Max number of iterations to avoid accidental infinite loop
-        for i in range(100):
+        for i in range(10000):
             # random number between 0 and 1
             rand_num = rand.random()
-            if rand_num == 1: break       # Because ln(0) -> infinity
+            if rand_num == 1:
+                break       # Because ln(0) -> infinity
             
             # Distance to next capture in cm
             cap_dist = ( -1 / (self.num_density * self.xsec_cm) *
                    np.log(1 - rand_num ))
             # Convert to meters:
             cap_dist *= 1e-2
-            
+            self.time += cap_dist/(rates.k/rates.mu)
             self.x += self.ux * cap_dist
             self.y += self.uy * cap_dist
             self.z += self.uz * cap_dist
-            
             if self.particle_in_det():
                 capture_state = key_val_by_weight(self.xsec_dict)[0]
-                self.capture_locs[(self.x, self.y, self.z)] = capture_state
+                self.capture_locs[(self.x, self.y, self.z, self.time)] = capture_state
             else:
                 break
     
-    
-    def photon_generation(self):
+    def photon_generation(self, event_num = 1):
         '''Simulates the decay of a nucleus in the DM potential well
-           and stores the energies of the emitted photons. This method
-           will eventually also store the 4-vectors (both position and
-           momentum).
+           and stores the energies and momenta of the emitted photons.
            
            This function looks through the starting states stored in
            the keys of self.capture_locs
            
-           Returns: N/A: stores energies in self.photon_energy_list'''
+           Returns: pyhepmc.event'''
+        ##################Seems to be causing problems on failed capture###################
         if len(self.capture_locs) == 0:
             # No decays to be done
-            return
+            raise ValueError("failed capture")
+        print("Capture successful, beginning photon generation.")
+        ###################################################################################
+        Argon_capture = 0 #describes the number of atoms containted within the Argon for PID selection purposes. 
+        event = hp.GenEvent() #generation of particle event, may need to account for events of size zero in the future to see failed capture events. (TODO)
+        event.event_number = event_num 
+        ########################## FIXME ###############################
+        a = hp.FourVector(0,0,0,0)
+        curr_DM = hp.GenParticle(a,0,0) # initializing DM particle outside of loop for proper event structure
+        ################################################################
         for location in self.capture_locs.keys():
-            phot_4_vec_list_curr_capture = []
+            position = hp.FourVector(location[0], location[1], location[2], location[3])
+            vertex = hp.GenVertex(position)
             q_state = self.capture_locs[location]
-            n = q_state[0]
-            l = q_state[1]
-            m = q_state[2]
+            n,l,m = q_state
             photon_energy = rates.EB(n, l)
             photon_ct, photon_phi = rates.sample_S_ctq_phiq(n,l,m)
             sin = (1 - photon_ct**2)**(0.5)
-            phot_ux = photon_energy * sin * np.cos(photon_phi)
-            phot_uy = photon_energy * sin * np.sin(photon_phi)
-            phot_uz = photon_energy * photon_ct
-            phot_4_vec = (photon_energy,phot_ux,phot_uy,phot_uz)
-            phot_4_vec_list_curr_capture.append(phot_4_vec)
+            DM_px = rates.k * self.ux
+            DM_py = rates.k * self.uy
+            DM_pz = rates.k * self.uz
+            DM_e = np.sqrt(rates.k**2 + rates.mu**2)
+            ######ADJUSTED PHOTON MOMENTUM TO BE RELATIVE TO THE REST FRAME RATHER THAN THE DM FRAME#################
+            phot_px = photon_energy * (sin * np.cos(photon_phi) + DM_px/DM_e)
+            phot_py = photon_energy * (sin * np.sin(photon_phi) + DM_py/DM_e)
+            phot_pz = photon_energy * (photon_ct + DM_pz/DM_e)
+            ### Non-relativistic, adjust if velocity is increased #######
+            photon_energy = np.sqrt(phot_px**2 + phot_py**2 + phot_pz**2)
+            #########################################################################################################
+            momentum = hp.FourVector(phot_px, phot_py, phot_pz, photon_energy)
+            particle = hp.GenParticle(momentum, 22, 1)
+            vertex.add_particle_out(particle)
+            momentum_Ar = hp.FourVector(0, 0, 0, rates.mu)
+            particle_Ar = hp.GenParticle(momentum_Ar,1000180400,4)
+            vertex.add_particle_in(particle_Ar)
+            # momentum 4 vector of DM calculation
+            momentum_DM = hp.FourVector(DM_px, DM_py, DM_pz, DM_e)
+            if Argon_capture > 0:
+                vertex.add_particle_in(curr_DM)
+            else:
+                curr_DM = hp.GenParticle(momentum_DM, self.QBALL_PID, 4)
+                vertex.add_particle_in(curr_DM)
             # For now have a limited range just in case
-            done = False
             for i in range(1000):
                 if n <= 1:
                     break
-                
                 decay_dict = rates.Gamma_tot_B(n, l, m)
                 # Can be used to make sure we're below ns time
                 total_decay_rate = sum_dict_vals(decay_dict)
                 new_state = key_val_by_weight(decay_dict)[0]
-                new_n = new_state[0]
-                new_l = new_state[1]
-                new_m = new_state[2]
+                new_n, new_l, new_m = new_state
                 
                 photon_energy = rates.q(n, l, new_n, new_l)
-                #for testing purposes; One is commented out at a time to see which is faster and if both produce the same results:
                 photon_ct, photon_phi = rates.sample_ctq_phi(m,new_m)
                 photon_ct = photon_ct.real
                 photon_phi = photon_phi.real
-                #photon_ct, photon_phi = rates.sample_B_ctq_phiq(n,l,m,new_n,new_l,new_m)
-                #########################################################################
                 sin = (1 - photon_ct**2)**(0.5)
-                phot_ux = photon_energy * sin * np.cos(photon_phi)
-                phot_uy = photon_energy * sin * np.sin(photon_phi)
-                phot_uz = photon_energy * photon_ct
-                phot_4_vec = (photon_energy,phot_ux,phot_uy,phot_uz)
-                phot_4_vec_list_curr_capture.append(phot_4_vec)
+
+                phot_px = photon_energy * (sin * np.cos(photon_phi) + DM_px/DM_e)
+                phot_py = photon_energy * (sin * np.sin(photon_phi) + DM_py/DM_e)
+                phot_pz = photon_energy * (photon_ct + DM_pz/DM_e)
+                ### Non-relativistic, adjust if velocity is increased #######
+                photon_energy = np.sqrt(phot_px**2 + phot_py**2 + phot_pz**2)
+
+                momentum = hp.FourVector(phot_px, phot_py, phot_pz, photon_energy)
+                particle = hp.GenParticle(momentum, 22, 1)
+                vertex.add_particle_out(particle)
                 
                 # Update quantum numbers for next loop iteration
                 n = new_n
@@ -270,8 +305,13 @@ class Detector:
                 
                 if i == 999:
                     print('ATTENTION: Did not finish decay. n =', n)
-            self.phot_4_vec_list.append(phot_4_vec_list_curr_capture)
-        
+            Argon_capture += 1
+            momentum_DM_Ar = hp.FourVector(DM_px,DM_py,DM_pz,DM_e) # NOTICE: ASSUMING PHOTON ENERGY AND MOMENTUM IS NEGLIGIBLE!
+            next_DM = hp.GenParticle(momentum_DM_Ar, self.BOUND_QBALL_AR_PID, 1)
+            vertex.add_particle_out(next_DM)
+            next_DM = curr_DM
+            event.add_vertex(vertex)
+        return event
 # Functions**********************************************************
 
 def sum_dict_vals(dictionary):
@@ -292,6 +332,7 @@ def key_val_by_weight(dictionary):
        Returns: Tuple containing a selected key and value'''
     
     keys = list(dictionary.keys())
+
     total = sum_dict_vals(dictionary)
     weight = rand.uniform(0, total)
     
@@ -307,6 +348,7 @@ def key_val_by_weight(dictionary):
             return (curr_key, curr_val)
     # Temporary statement for testing purposes
     print('ERROR: "key_val_by_weight()" Exited the loop somehow')
+
     return (curr_key, curr_val)
     
 
