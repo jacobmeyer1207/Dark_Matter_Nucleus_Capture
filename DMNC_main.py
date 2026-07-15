@@ -78,56 +78,8 @@ det_width = 15.1                       # meters
 det_height = 14                        # meters
 
 ########################################################################## LOOK INTO THIS #TODO ###############################
-# typical jump size, difference between point heights should be exactly the energy levels of the photons (q function calculates this!)
-# perhaps plot the theoretical q from the math for all n,l transitions, then compare to the sampling data.
 x_sec_dict = rates.xsec_v_tot_S() # keys: states, vals: X sects
 xsec_tot = sum_dict_vals(x_sec_dict)   # Total cross section, GeV^-2
-largest_state = max(x_sec_dict.items(), key=lambda x: x[1])
-
-
-
-
-#Testing for proper rates.xsec_v_tot_s() functionality, plots vs R
-'''
-searches = [np.arange(9, 11, .01)]
-for j in searches:
-    print("beginning task")
-    i_list = []
-    sec_list = []
-    sec_len_list = []
-    for i in j:
-        rates = rts.Rates(R = i)
-        x_sec_dict = rates.xsec_v_tot_S() # keys: states, vals: X sects
-        xsec_tot = sum_dict_vals(x_sec_dict)   # Total cross section, GeV^-2
-        largest_state = max(x_sec_dict.items(), key=lambda x: x[1])
-
-        print(
-                "radius:",rates.radius,
-                "largest state:",largest_state[0],     # (n,l,m)
-                "cross-section:",largest_state[1],     # cross section
-                "total cross-section",xsec_tot,
-                "fraction of total:",largest_state[1]/xsec_tot,
-                "average cross-section:",xsec_tot/len(x_sec_dict)
-            )
-
-        sec_len_list.append(len(x_sec_dict))
-        i_list.append(i)
-        sec_list.append(xsec_tot)
-    maxS = max(sec_list)
-    print("max cross section:",maxS)
-    print("associated R value:",i_list[sec_list.index(maxS)])
-    print("average cross section:", sum(sec_list)/len(sec_list))
-    plt.plot(i_list,sec_list,'.')
-    plt.yscale('log')
-    plt.xlabel('R value')
-    plt.ylabel('cross-section total')
-    plt.show()
-    plt.plot(sec_len_list, sec_list,'.')
-    plt.yscale('log')
-    plt.xlabel('length of cross section list')
-    plt.ylabel('cross-section total')
-    plt.show()
-''' 
 
 # hc is 1240 eV * nm: e-9 for eV -> GeV, e-7 for nm -> cm
 cm_from_inv_gev = 1240 / (2 * np.pi) * 1e-16
@@ -140,38 +92,6 @@ xsec_cm = xsec_tot * cm_from_inv_gev**2  # Total cross section, cm^2
 num_density_LAr = 1.39 * 6.02e23 / 39.948
 
 # Main***************************************************************
-
-# Right now I am using this section for miscellaneous tests.
-# I comment out the ones not in use, but save them because
-# they are still useful for seeing how things are working.
-
-'''
-for i in range(500000):
-    face_count[det.random_face()] += 1
-
-plt.title("Histogram of Entrance Location")
-plt.grid(True)
-plt.xlim(0, 7)
-plt.bar(x=[i for i in range(1, 7)], height=[face_count[key] for key in face_count.keys()], tick_label = list(face_count.keys()))
-plt.show()
-
-
-
-for i in range(1000):
-    det.random_entrance()
-    if not det.particle_in_det():
-        print('Test failed: particle outside detector')
-        break
-    unit_norm = np.sqrt(det.ux**2 + det.uy**2 + det.uz**2)
-    if unit_norm < 0.999999999 or unit_norm > 1.000000001:
-        print('Test failed: unit vector not normalized.')
-        print('norm =', unit_norm)
-        break
-    if i == 99:
-        print('Success! All tests passed')
-
-
-'''
 
 def Gen_DM_particle_event():
     i = 0
@@ -189,7 +109,6 @@ def Gen_DM_particle_event():
         except ValueError as ex:
             continue
 
-    
 def Capture_stats():
     start_time = time.monotonic()
     event = Gen_DM_particle_event()
@@ -201,8 +120,9 @@ def Capture_stats():
     print_event_summary(event)
 
 def print_event_summary(event):
-    print(event)
-    '''print(f"Event {event.event_number}")
+    print(event) 
+    ''' for if the event is large
+    print(f"Event {event.event_number}")
     print(f"Particles: {len(event.particles)}")
     print(f"Vertices : {len(event.vertices)}")
     print(f"Weights  : {event.weights}")
@@ -210,7 +130,7 @@ def print_event_summary(event):
     print(f"Length units  : {event.length_unit}")
     '''
 
-#plot in terms of n and l the photon energies
+
 def graph_data(event):
     particle_e_list = []
     for particle in event.particles:
@@ -222,7 +142,10 @@ def graph_data(event):
     plt.show()
 
 Capture_stats()
+
+
 ####Testing photon energy generation sampling#########################
+#plot in terms of n and l the photon energies
 '''
 def plot_energies(n, T_phot_e):
     if(n > 1):
@@ -278,6 +201,78 @@ plt.legend(loc='upper right')
 plt.title('Inverse transform sampling vs Rejection sampling')
 plt.show()
 '''
+
+'''
+for i in range(500000):
+    face_count[det.random_face()] += 1
+
+plt.title("Histogram of Entrance Location")
+plt.grid(True)
+plt.xlim(0, 7)
+plt.bar(x=[i for i in range(1, 7)], height=[face_count[key] for key in face_count.keys()], tick_label = list(face_count.keys()))
+plt.show()
+
+
+
+for i in range(1000):
+    det.random_entrance()
+    if not det.particle_in_det():
+        print('Test failed: particle outside detector')
+        break
+    unit_norm = np.sqrt(det.ux**2 + det.uy**2 + det.uz**2)
+    if unit_norm < 0.999999999 or unit_norm > 1.000000001:
+        print('Test failed: unit vector not normalized.')
+        print('norm =', unit_norm)
+        break
+    if i == 99:
+        print('Success! All tests passed')
+'''
+#Testing for proper rates.xsec_v_tot_s() functionality, plots vs R
+
+searches = [np.arange(10, 12, .001)]
+for j in searches:
+    print("beginning task")
+    i_list = []
+    sec_list = []
+    sec_len_list = []
+    for i in j:
+        rates = rts.Rates(R = i)
+        x_sec_dict = rates.xsec_v_tot_S() # keys: states, vals: X sects
+        xsec_tot = sum_dict_vals(x_sec_dict)   # Total cross section, GeV^-2
+        if len(x_sec_dict) != 0:
+            largest_state = max(x_sec_dict.items(), key=lambda x: x[1])
+
+        print(
+                "radius:",rates.radius,
+                #"largest state:",largest_state[0],     # (n,l,m)
+                #"cross-section:",largest_state[1],     # cross section
+                "total cross-section",xsec_tot,
+                #"fraction of total:",largest_state[1]/xsec_tot,
+            )
+        if len(x_sec_dict) != 0:
+            print("largest state:",largest_state[0],     # (n,l,m)
+            "cross-section:",largest_state[1],
+            "fraction of total:",largest_state[1]/xsec_tot)
+            print("average cross-section:",xsec_tot/len(x_sec_dict))
+        else:
+            print("ERROR: NO CROSS-SECTIONS FOUND.")
+        sec_len_list.append(len(x_sec_dict))
+        i_list.append(i)
+        sec_list.append(xsec_tot)
+    maxS = max(sec_list)
+    print("max cross section:",maxS)
+    print("associated R value:",i_list[sec_list.index(maxS)])
+    print("average cross section:", sum(sec_list)/len(sec_list))
+    plt.plot(i_list,sec_list,'.')
+    plt.yscale('log')
+    plt.xlabel('R value')
+    plt.ylabel('cross-section total')
+    plt.show()
+    plt.plot(sec_len_list, sec_list,'.')
+    plt.yscale('log')
+    plt.xlabel('length of cross section list')
+    plt.ylabel('cross-section total')
+    plt.show()
 
 
 
