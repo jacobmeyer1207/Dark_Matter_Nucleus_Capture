@@ -13,10 +13,13 @@ from scipy.optimize import fsolve
 from mpmath import besseljzero
 # binomial coefficients that appear in spherical harmonics products
 from scipy.special import comb
+# for parallelization
+import multiprocessing as mp
+
 
 # MARK: Class **************************************************************************
 class Rates:
-    def __init__(self, Z = 18, A = 40, mu_mult = .938, V0_mult = .246, velDM = .001, R = 10):
+    def __init__(self, Z = 18, A = 40, mu_mult = .938, V0_mult = .246, velDM = .001, R = 10.0):
     ################################################################################
     # PARAMETERS
     ################################################################################
@@ -270,6 +273,10 @@ class Rates:
     # n,l,m: quantum numbers of decaying state
     # Returns: all allowed n,l,m final states with their respective decay rate
     '''parallelize TODO'''
+
+
+
+
     def Gamma_tot_B(self,n,l,m,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
         res = {}
         #task_list = []
@@ -278,14 +285,18 @@ class Rates:
                 continue
             nf = self.nmax(lf,self.EB(n,l))
             while nf > 0 and self.q(n,l,nf,lf)*self.radius < np.pi:
+                #changed from m-1 to m+2 since python doesn't account for the m+1 if stopping there, only reaches m.
                 for mf in range(m-1,m+2):
                     if mf > lf or mf < -lf:
                         continue
                     #parallelizing in the future
-                    #task_list.append([n,l,m,nf,lf,mf])
+                    #args.append((ni,li,mi,lf,nf,lf,force_full,subinterval_periods,approx_threshold))
                     rate = self.Gamma_B(n,l,m,nf,lf,mf,force_full,subinterval_periods,approx_threshold)
                     res[(nf,lf,mf)] = rate
                 nf -= 1
+                #with mp.Pool(mp.cpu_count()) as pool:
+                    #rates = pool.map(self.Gamma_B, args)
+                    #res[(nf,lf,mf)] = rates #somehow, not sure yet.
         return res
 
     def pdf_phi_B(self,phiq,ctq,ni,li,mi,nf,lf,mf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
@@ -325,22 +336,22 @@ class Rates:
                     xsec_v = self.xsec_v_S(nf,lf,mf,force_full,subinterval_periods,approx_threshold)
                     res[(nf,lf,mf)] = xsec_v
                 nf -= 1
-            
         return res
 
     ################################################################################
     # SAMPLE cos(theta)
     ################################################################################
 
-    def sample_ctq_phi(self,mi,mf):
+    def sample_ctq_phiq(self,ni,li,mi,nf,lf,mf):
             y = np.random.random()
-            phi = np.random.uniform(0,2*np.pi)
             if mi == mf:
                 delta = np.exp(1j * np.pi / 3.0) * (-1.0 + 2.0*y + 2.0 * 1j * np.sqrt((1.0-y)*y))**(1.0/3.0)
-                return (1.0/delta + delta), phi
+                phiq = self.sample_B_phiq(ni,li,mi,nf,lf,mf,(1.0/delta + delta))
+                return (1.0/delta + delta), phiq
             elif abs(mi - mf) == 1:
                 delta = (-2.0 + 4.0*y + np.sqrt(5.0 - 16.0*(1.0-y)*y))**(1.0/3.0) 
-                return (-1.0/delta + delta), phi
+                phiq = self.sample_B_phiq(ni,li,mi,nf,lf,mf,(-1.0/delta + delta))
+                return (-1.0/delta + delta), phiq
             raise ValueError('Transition not allowed')
 
     def sample_S_ctq_phiq(self,nf,lf,mf):
@@ -358,6 +369,22 @@ class Rates:
                 break
         return(ctq,phiq)
 
+    ####Temporary phiq rejection sampling, use till we have proper inverse transform sampling method for phiq
+    def sample_B_phiq(self,ni,li,mi,nf,lf,mf,ctq):
+        selection = False
+        while selection == False:
+            phiq = np.random.uniform(0,2*np.pi)
+            #Normalization constant of probability distribution function
+            Npdf = 1/self.Gamma_B(ni,li,mi,nf,lf,mf)
+            Mpdf = np.random.uniform(0,1)
+            #Check height of probability distribution at ctq and phiq
+            hd = Npdf*self.dGamma_B_dphidct(ctq,phiq,ni,li,mi,nf,lf,mf)
+            if Mpdf<hd:
+                selection = True
+                break
+        return(phiq)
+
+    ''' use if rejection turns out to be faster after limiting Mpdf to maximum pdf height
     def sample_B_ctq_phiq(self,ni,li,mi,nf,lf,mf):
         selection = False
         while selection == False:
@@ -372,3 +399,4 @@ class Rates:
                 selection = True
                 break
         return(ctq,phiq)
+    '''
