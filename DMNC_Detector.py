@@ -227,12 +227,10 @@ class Detector:
            the keys of self.capture_locs
            
            Returns: pyhepmc.event'''
-        ##################Seems to be causing problems on failed capture###################
         if len(self.capture_locs) == 0:
             # No decays to be done
             raise ValueError("failed capture")
         print("Capture successful, beginning photon generation.")
-        ###################################################################################
         Argon_capture = 0 #describes the number of atoms containted within the Argon for PID selection purposes. 
         event = hp.GenEvent() #generation of particle event, may need to account for events of size zero in the future to see failed capture events. (TODO)
         event.event_number = event_num 
@@ -252,20 +250,19 @@ class Detector:
             DM_py = rates.k * self.uy
             DM_pz = rates.k * self.uz
             DM_e = np.sqrt(rates.k**2 + rates.mu**2)
-            ######ADJUSTED PHOTON MOMENTUM TO BE RELATIVE TO THE REST FRAME RATHER THAN THE DM FRAME#################
+            ######ADJUSTED PHOTON MOMENTUM TO BE RELATIVE TO THE LAB FRAME RATHER THAN THE DM FRAME#################
             phot_px = photon_energy * (sin * np.cos(photon_phi) + DM_px/DM_e)
             phot_py = photon_energy * (sin * np.sin(photon_phi) + DM_py/DM_e)
             phot_pz = photon_energy * (photon_ct + DM_pz/DM_e)
             ### Non-relativistic, adjust if velocity is increased #######
             photon_energy = np.sqrt(phot_px**2 + phot_py**2 + phot_pz**2)
-            #########################################################################################################
+            ########################################################################################################
             momentum = hp.FourVector(phot_px, phot_py, phot_pz, photon_energy)
             particle = hp.GenParticle(momentum, 22, 1)
             vertex.add_particle_out(particle)
             momentum_Ar = hp.FourVector(0, 0, 0, rates.mu)
             particle_Ar = hp.GenParticle(momentum_Ar,1000180400,4)
             vertex.add_particle_in(particle_Ar)
-            # momentum 4 vector of DM calculation
             momentum_DM = hp.FourVector(DM_px, DM_py, DM_pz, DM_e)
             if Argon_capture > 0:
                 vertex.add_particle_in(curr_DM)
@@ -283,7 +280,7 @@ class Detector:
                 new_n, new_l, new_m = new_state
                 
                 photon_energy = rates.q(n, l, new_n, new_l)
-                photon_ct, photon_phi = rates.sample_ctq_phi(m,new_m)
+                photon_ct, photon_phi = rates.sample_ctq_phiq(n,l,m,new_n,new_l,new_m)
                 photon_ct = photon_ct.real
                 photon_phi = photon_phi.real
                 sin = (1 - photon_ct**2)**(0.5)
