@@ -228,7 +228,7 @@ for i in range(1000):
         print('Success! All tests passed')
 '''
 #Testing for proper rates.xsec_v_tot_s() functionality, plots vs R
-
+'''
 searches = [np.arange(10, 12, .001)]
 for j in searches:
     print("beginning task")
@@ -273,6 +273,7 @@ for j in searches:
     plt.xlabel('length of cross section list')
     plt.ylabel('cross-section total')
     plt.show()
+    '''
 
 
 
