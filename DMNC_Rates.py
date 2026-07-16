@@ -245,7 +245,7 @@ class Rates:
         cpq = np.cos(phiq)
         cpq2 = cpq**2
         return np.array[[2/3*cpq2, 4/3*cpq*spq, 0],
-                        [4/3*cpq*spq, 2/3*spq2, 0]
+                        [4/3*cpq*spq, 2/3*spq2, 0],
                         [0, 0, 4/3]]
 
     pol_tensor_int = 8.0 * np.pi / 3.0
