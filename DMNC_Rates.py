@@ -237,6 +237,16 @@ class Rates:
         ctq2 = ctq**2
         stq2 = 1.0 - ctq2
         return np.pi * np.diag([ 1.0 + ctq2, 1.0 + ctq2, 2.0*stq2 ])
+        
+    #Double check this to ensure correctness (Jacob)
+    def pol_tensor_ct_int(self,phiq):
+        spq = np.sin(phiq)
+        spq2 = spq**2
+        cpq = np.cos(phiq)
+        cpq2 = cpq**2
+        return np.array[[2/3*cpq2, 4/3*cpq*spq, 0],
+                        [4/3*cpq*spq, 2/3*spq2, 0]
+                        [0, 0, 4/3]]
 
     pol_tensor_int = 8.0 * np.pi / 3.0
 
