@@ -5,16 +5,10 @@ import random as rand
 import time
 import pandas as pd
 import pyhepmc as hp
-
-import pip
-print(pip.__version__) 
-
-
-
 import DMNC_Detector as dmnc_det     # Comes with plt, np, rand, time
-
-
 import DMNC_Rates as rts   # Access to many fundamental calculations
+import pip
+
 rates = rts.Rates()
 # Functions**********************************************************
 
@@ -77,16 +71,6 @@ det_length = 62                        # meters
 det_width = 15.1                       # meters
 det_height = 14                        # meters
 
-########################################################################## LOOK INTO THIS #TODO ###############################
-x_sec_dict = rates.xsec_v_tot_S() # keys: states, vals: X sects
-xsec_tot = sum_dict_vals(x_sec_dict)   # Total cross section, GeV^-2
-
-# hc is 1240 eV * nm: e-9 for eV -> GeV, e-7 for nm -> cm
-cm_from_inv_gev = 1240 / (2 * np.pi) * 1e-16
-
-xsec_cm = xsec_tot * cm_from_inv_gev**2  # Total cross section, cm^2
-
-###############################################################################################################################
 
 # Number density of Liquid Argon, cm^-3:
 num_density_LAr = 1.39 * 6.02e23 / 39.948
@@ -98,13 +82,22 @@ def Gen_DM_particle_event():
     while True:
         i += 1
         try:
-            det = dmnc_det.Detector(det_length, det_width, det_height, num_density_LAr, xsec_cm, x_sec_dict)
-            det.random_entrance()
+            det = dmnc_det.Detector(det_length, det_width, det_height, num_density_LAr)
+            vx,vy,vz,v = det.random_entrance()
+            rates.set_velocity(vx,vy,vz) #initializing k (DM-Ar reduced mass momentum)
+            #setting cross-sections here to allow for random velocity implementation
+            x_sec_dict = rates.xsec_v_tot_S() # keys: states, vals: X sects
+            xsec_tot = sum_dict_vals(x_sec_dict)   # Total cross section, GeV^-2
+            # hc is 1240 eV * nm: e-9 for eV -> GeV, e-7 for nm -> cm
+            cm_from_inv_gev = 1240 / (2 * np.pi) * 1e-16
+
+            xsec_cm = xsec_tot * cm_from_inv_gev**2  # Total cross section, cm^2
+            det.set_xsec(x_sec_dict, xsec_cm)
             det.gen_capture_locs()
-            event = det.photon_generation()
-            print("Captures:", len(det.capture_locs))
+            event = det.photon_generation() 
             print("number of failed captures:", i)
             print("Cross-section of capture in cm:", xsec_cm)
+            print("DM velocity:",v,"c.")
             return(event)
         except ValueError as ex:
             continue
@@ -141,28 +134,55 @@ def graph_data(event):
     plt.ylabel("Number of Photons")
     plt.show()
 
-Capture_stats()
+def main():
+    print(pip.__version__) 
+    #Capture_stats()
 
+if __name__ == "__main__":
+    main()
 
+####Testing radial wavefunction for proper amplitudes, l = 1
+'''
+def plot_wavefunc(n):
+    for j in range(n):
+        R_list = []
+        r_list = []
+        for i in range(2000):
+            r = 12*(i+1)/2001
+            r_list.append(r)
+            R = rates.RB(r,j+1,1)/r
+            R_list.append(R)
+        plt.plot(r_list, R_list, label=f"n={j+1}")
+        plt.legend()
+    plt.xlabel('r')
+    plt.ylabel('R_nl')
+    plt.title("All radial wave functions as a function of r for the p-wave bound states with l = 1")
+    plt.show()
+
+n = rates.nmax(1,0)
+plot_wavefunc(n)
+'''
+        
 ####Testing photon energy generation sampling#########################
 #plot in terms of n and l the photon energies
 '''
-def plot_energies(n, T_phot_e):
+def plot_energies(n):
     if(n > 1):
-        T_data_n_l_trans = []
+        T_data_n_l = []
+        l_list = []
         for i in range(n-1):
-            curr_T_phot_e = rates.EB(n,i)
-            T_phot_diff = T_phot_e - curr_T_phot_e
-            T_data_n_l_trans.append(T_phot_diff)
-            T_phot_e = curr_T_phot_e
-        print(len(T_data_n_l_trans))
-        plt.plot(T_data_n_l_trans, range(n-1), '.')
-        T_phot_e = rates.EB(n-1,0)
-        plot_energies(n-1, T_phot_e)
+            curr_T_phot_e = -rates.EB(n,i)
+            if curr_T_phot_e < 0:
+                T_data_n_l.append(curr_T_phot_e)
+                l_list.append(i)
+        print(len(T_data_n_l))
+        plt.plot(l_list ,T_data_n_l, '.')
+        plt.xlabel("l values (different n is different color)")
+        plt.ylabel("Binding energy")
+        plot_energies(n-1)
     else:
         return("done")
-T_phot_e = rates.EB(85,0)
-print(plot_energies(85, T_phot_e))
+print(plot_energies(85))
 plt.show()
 '''
 
@@ -274,6 +294,5 @@ for j in searches:
     plt.ylabel('cross-section total')
     plt.show()
     '''
-
 
 
