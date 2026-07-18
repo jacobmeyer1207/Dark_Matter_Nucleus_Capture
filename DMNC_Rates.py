@@ -2,6 +2,8 @@
 # ENVIRONMENT
 ################################################################################
 
+import scipy as sp
+
 import numpy as np
 # Bessel functions appear as the wavefunctions here
 from scipy.special import spherical_jn,spherical_yn,jv,jvp,yvp
@@ -14,28 +16,33 @@ from mpmath import besseljzero
 # binomial coefficients that appear in spherical harmonics products
 from scipy.special import comb
 # for parallelization
-import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
+
+
 
 
 # MARK: Class **************************************************************************
 class Rates:
-    def __init__(self, Z = 18, A = 40, mu_mult = .938, V0_mult = .246, velDM = .001, R = 10.0):
+    def __init__(self, Z = 18, A = 40, mu_mult = .938, V0_mult = .246, R = 10.0):
     ################################################################################
     # PARAMETERS
     ################################################################################
-        
         self.Z = Z                                  # material atomic number
         self.A = A                                  # material mass number
         self.e = np.sqrt(4.0 * np.pi / 137)         # electric charge, dimensionless
         self.mu = A * mu_mult                       # nucleus (reduced) mass, GeV
         self.V0 = A * V0_mult                       # potential depth, GeV (A* expectation value of the higgs)
-        self.k = velDM * self.mu                    # incoming DM momentum, GeV (What? mu is the Argon's reduced mass... TODO: check this vs all new uses)
+        self.k = .001                               # incoming DM momentum, GeV (.001 until initialized by set_rand_velocity. TODO: Fix DM lab frame momenta)
         self.radius = R                             # DM radius, GeV^-1
-        self.levels = {}                            # cache for energy levels
         # For States**************************************************************
-        self.kapS = np.sqrt(self.k**2 + 2.0 * self.mu * self.V0)   # interior momentum for scattering, GeV
-        # For Integrals***********************************************************
+        self.kapS = np.sqrt(self.k**2 + 2.0 * self.mu * self.V0)    # interior momentum for scattering, initialized in rand_vel, GeV
+        # Caches******************************************************************
+        self.levels = {}                            # cache for energy levels
         self.rad_int_B_cache = {}
+        self.ang_int_cache = {}
+        self.rad_int_S_cache = {}
+        self.NB_cache = {}
+        self.kapB_levels = {} #cache for momentum, primarily for repeated RB usage.
 
 
     # Derivatives of spherical bessel functions
@@ -47,14 +54,31 @@ class Rates:
     def spherical_jnz(self,l,n):
         return float(besseljzero(l+0.5,n))
 
+    def set_rand_velocity(self):
+        vx = sp.stats.norm.rvs(0, 10**(-3))
+        vy = sp.stats.norm.rvs(0, 10**(-3))
+        vz = sp.stats.norm.rvs(0, 10**(-3))
+        velDM = np.sqrt(vx**2 + vy**2 + vz**2)
+        self.k = velDM * self.mu
+        self.kapS = np.sqrt(self.k**2 + 2.0 * self.mu * self.V0)
+        return(vx,vy,vz,velDM)
 
+    def set_velocity(self,vx,vy,vz):
+        velDM = np.sqrt(vx**2 + vy**2 + vz**2)
+        self.k = velDM * self.mu
+        self.kapS = np.sqrt(self.k**2 + 2.0 * self.mu * self.V0)
     ################################################################################
     # STATES
     ################################################################################
 
     # momentum inside potential well for bound state, GeV
     def kapB(self,n,l):
-        return self.spherical_jnz(l,n) / self.radius
+        try:
+            return self.kapB_levels[(l,n)]
+        except KeyError:
+            res = self.spherical_jnz(l,n)/self.radius
+            self.kapB_levels[(l,n)] = res
+            return res
     # (positive) binding energy for state, GeV
     def EB(self,n,l):
         try:
@@ -87,8 +111,12 @@ class Rates:
 
     # normalization for bound state, GeV^-3/2
     def NB(self,n,l):
-        normint = -0.25*(np.pi*self.radius**3*jv(-0.5 + l,self.spherical_jnz(l,n))*jv(1.5 + l,self.spherical_jnz(l,n)))/self.spherical_jnz(l,n)
-        return 1.0/np.sqrt(normint)
+        try:
+            return self.NB_cache[n,l]
+        except KeyError:
+            normint = -0.25*(np.pi*self.radius**3*jv(-0.5 + l,self.spherical_jnz(l,n))*jv(1.5 + l,self.spherical_jnz(l,n)))/self.spherical_jnz(l,n)
+            self.NB_cache[n,l] = 1.0/np.sqrt(normint)
+            return 1.0/np.sqrt(normint)
     # boundary conditions for scattering state
     def bcs(self,Ns,delta,l):
         return ((np.cos(delta) * spherical_jn(l,self.k*self.radius) + np.sin(delta) * spherical_yn(l,self.k*self.radius)) - Ns * spherical_jn(l,self.kapS*self.radius),
@@ -142,7 +170,6 @@ class Rates:
 
     # radial intergral for scattering in dipole approximation
     # dimension GeV^-4
-    rad_int_S_cache = {}
     def rad_int_S(self,li,nf,lf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
         if abs(li-lf) != 1:
             raise ValueError('Calculating amplitude for unallowed transition')
@@ -170,17 +197,24 @@ class Rates:
 
     # Angular integral assembled for all three components
     def ang_int(self,li,mi,lf,mf):
-        if abs(li-lf) != 1 or abs(mi-mf) > 1:
-            return 0.0
-        sph_x = self.sph_prod(li,mi,-1,lf,mf)-self.sph_prod(li,mi,1,lf,mf)
-        sph_y = 1j*(self.sph_prod(li,mi,-1,lf,mf)+self.sph_prod(li,mi,1,lf,mf))
-        sph_z = np.sqrt(2.0) * self.sph_prod(li,mi,0,lf,mf)
-        return np.sqrt(2.0*np.pi/3.0) * np.array([sph_x,sph_y,sph_z])
+        try:
+            return self.ang_int_cache[li,mi,lf,mf]
+        except KeyError:
+            if abs(li-lf) != 1 or abs(mi-mf) > 1:
+                return 0.0
+            sph_x = self.sph_prod(li,mi,-1,lf,mf)-self.sph_prod(li,mi,1,lf,mf)
+            sph_y = 1j*(self.sph_prod(li,mi,-1,lf,mf)+self.sph_prod(li,mi,1,lf,mf))
+            sph_z = np.sqrt(2.0) * self.sph_prod(li,mi,0,lf,mf)
+            self.ang_int_cache[li,mi,lf,mf] = np.sqrt(2.0*np.pi/3.0) * np.array([sph_x,sph_y,sph_z])
+            return np.sqrt(2.0*np.pi/3.0) * np.array([sph_x,sph_y,sph_z])
 
     # amplitude
     # dimesionless
-    def amp_B(self,ni,li,mi,nf,lf,mf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
-        return self.Z * self.e * self.q(ni,li,nf,lf) * self.NB(ni,li) * self.NB(nf,lf) * self.rad_int_B(ni,li,nf,lf,force_full,subinterval_periods,approx_threshold) * self.ang_int(li,mi,lf,mf)
+    def amp_B_radial(self,ni,li,nf,lf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
+        return self.Z * self.e * self.q(ni,li,nf,lf) * self.NB(ni,li) * self.NB(nf,lf) * self.rad_int_B(ni,li,nf,lf,force_full,subinterval_periods,approx_threshold)
+
+    def amp_B(self,li,mi,lf,mf,amp_r):
+        return amp_r * self.ang_int(li,mi,lf,mf)
 
     # amplitude for scattering
     # in GeV^-3/2
@@ -237,8 +271,7 @@ class Rates:
         ctq2 = ctq**2
         stq2 = 1.0 - ctq2
         return np.pi * np.diag([ 1.0 + ctq2, 1.0 + ctq2, 2.0*stq2 ])
-        
-    #Double check this to ensure correctness (Jacob)
+
     def pol_tensor_ct_int(self,phiq):
         spq = np.sin(phiq)
         spq2 = spq**2
@@ -258,16 +291,16 @@ class Rates:
     # eps: polarization of outgoing photon (+- 1 for right/left)
     # ni,li,mi: initial state quantum numbers
     # nf,lf,mf: final state quantum numbers
-    def dGamma_B_dphidct(self,ctq,phiq,ni,li,mi,nf,lf,mf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
-        amp = self.amp_B(ni,li,mi,nf,lf,mf,force_full,subinterval_periods,approx_threshold)
+    def dGamma_B_dphidct(self,ctq,phiq,ni,li,mi,nf,lf,mf,amp_r):
+        amp = self.amp_B(li,mi,lf,mf,amp_r)
         return np.real(self.q(ni,li,nf,lf) * np.linalg.multi_dot([np.conjugate(amp),self.pol_tensor_full(ctq,phiq),amp]) / (8.0 * np.pi**2))
 
     # decay rate integrated in cos(theta) of the photon (ctq,phiq) relative to spin z axis, GeV
     # eps: polarization of outgoing photon (+- 1 for right/left)
     # ni,li,mi: initial state quantum numbers
     # nf,lf,mf: final state quantum numbers
-    def dGamma_B_dct(self,ctq,ni,li,mi,nf,lf,mf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
-        amp = self.amp_B(ni,li,mi,nf,lf,mf,force_full,subinterval_periods,approx_threshold)
+    def dGamma_B_dct(self,ctq,ni,li,mi,nf,lf,mf,amp_r):
+        amp = self.amp_B(li,mi,lf,mf,amp_r)
         return np.real(self.q(ni,li,nf,lf) * np.linalg.multi_dot([np.conjugate(amp),self.pol_tensor_phi_int(ctq),amp]) / (8.0 * np.pi**2))
 
 
@@ -275,9 +308,9 @@ class Rates:
     # Independent of polarization (emerges as phase)
     # ni,li,mi: initial state quantum numbers
     # nf,lf,mf: final state quantum numbers
-    def Gamma_B(self,ni,li,mi,nf,lf,mf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
-        amp = self.amp_B(ni,li,mi,nf,lf,mf,force_full,subinterval_periods,approx_threshold)
-        return np.real(self.q(ni,li,nf,lf) * self.pol_tensor_int * np.linalg.multi_dot([np.conjugate(amp),amp]) / (8.0 * np.pi**2)) # decay rate to all allowed states in GeV
+    def Gamma_B(self,ni,li,mi,nf,lf,mf,amp_r):
+        amp = self.amp_B(li,mi,lf,mf,amp_r)
+        return np.real(self.q(ni,li,nf,lf) * self.pol_tensor_int * np.vdot(amp, amp) / (8.0 * np.pi**2)) # decay rate to all allowed states in GeV
 
     # decay rate to all allowed states in GeV
     # n,l,m: quantum numbers of decaying state
@@ -285,32 +318,36 @@ class Rates:
     '''parallelize TODO'''
 
 
-
+    #def worker(self,job):
+    #    ni,li,mi,nf,lf,mf,force_full,subinterval_periods,approx_threshold = job
+    #    amp_r = amp_B_radial(ni,li,nf,lf,force_full,subinterval_periods,approx_threshold)
+    #    return self.Gamma_B(li,mi,lf,mf,amp_r)
 
     def Gamma_tot_B(self,n,l,m,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
         res = {}
-        #task_list = []
+        #job_list = []
+        #states = []
         for lf in [l-1,l+1]:
             if lf < 0:
                 continue
             nf = self.nmax(lf,self.EB(n,l))
             while nf > 0 and self.q(n,l,nf,lf)*self.radius < np.pi:
+                amp_r = self.amp_B_radial(n,l,nf,lf,force_full,subinterval_periods,approx_threshold)
                 #changed from m-1 to m+2 since python doesn't account for the m+1 if stopping there, only reaches m.
                 for mf in range(m-1,m+2):
                     if mf > lf or mf < -lf:
                         continue
-                    #parallelizing in the future
-                    #args.append((ni,li,mi,lf,nf,lf,force_full,subinterval_periods,approx_threshold))
-                    rate = self.Gamma_B(n,l,m,nf,lf,mf,force_full,subinterval_periods,approx_threshold)
-                    res[(nf,lf,mf)] = rate
+                    #parallelizing in the future (Use chunksize = larger number to increase efficiency)
+                    #job_list.append((n,l,m,nf,lf,mf,force_full,subinterval_periods,approx_threshold))
+                    res[nf,lf,mf] = self.Gamma_B(n,l,m,nf,lf,mf,amp_r)
                 nf -= 1
-                #with mp.Pool(mp.cpu_count()) as pool:
-                    #rates = pool.map(self.Gamma_B, args)
-                    #res[(nf,lf,mf)] = rates #somehow, not sure yet.
+                #with ProcessPoolExecutor() as executor:
+                #    res_results = executor.map(self.worker, job_list)
+
+                #    res = dict(zip(states,res_results))
         return res
 
-    def pdf_phi_B(self,phiq,ctq,ni,li,mi,nf,lf,mf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
-        amp = self.amp_B(ni,li,mi,nf,lf,mf,force_full,subinterval_periods,approx_threshold)
+    
 
 
     ################################################################################
@@ -384,29 +421,14 @@ class Rates:
         selection = False
         while selection == False:
             phiq = np.random.uniform(0,2*np.pi)
+            amp_r = self.amp_B_radial(ni,li,nf,lf)
             #Normalization constant of probability distribution function
-            Npdf = 1/self.Gamma_B(ni,li,mi,nf,lf,mf)
+            Npdf = 1/self.Gamma_B(ni,li,mi,nf,lf,mf,amp_r)
             Mpdf = np.random.uniform(0,1)
             #Check height of probability distribution at ctq and phiq
-            hd = Npdf*self.dGamma_B_dphidct(ctq,phiq,ni,li,mi,nf,lf,mf)
+            hd = Npdf*self.dGamma_B_dphidct(ctq,phiq,ni,li,mi,nf,lf,mf,amp_r)
             if Mpdf<hd:
                 selection = True
                 break
         return(phiq)
 
-    ''' use if rejection turns out to be faster after limiting Mpdf to maximum pdf height
-    def sample_B_ctq_phiq(self,ni,li,mi,nf,lf,mf):
-        selection = False
-        while selection == False:
-            ctq = np.random.uniform(-1,1)
-            phiq = np.random.uniform(0,2*np.pi)
-            #Normalization constant of probability distribution function
-            Npdf = 1/self.Gamma_B(ni,li,mi,nf,lf,mf)
-            Mpdf = np.random.uniform(0,1)
-            #Check height of probability distribution at ctq and phiq
-            hd = Npdf*self.dGamma_B_dphidct(ctq,phiq,ni,li,mi,nf,lf,mf)
-            if Mpdf<hd:
-                selection = True
-                break
-        return(ctq,phiq)
-    '''
