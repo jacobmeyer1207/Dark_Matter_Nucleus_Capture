@@ -8,6 +8,7 @@ import pyhepmc as hp
 import DMNC_Detector as dmnc_det     # Comes with plt, np, rand, time
 import DMNC_Rates as rts   # Access to many fundamental calculations
 import pip
+from concurrent.futures import ProcessPoolExecutor
 
 # Functions**********************************************************
 
@@ -100,26 +101,28 @@ def Gen_DM_particle_event():
         except ValueError as ex:
             continue
 
-def Capture_stats():
-    start_time = time.monotonic()
-    event = Gen_DM_particle_event()
-    end_time = time.monotonic()
-    duration = end_time - start_time
-    print('Time to generate all decays:', format_seconds(duration))
-    capture_num = len(event.vertices)
-    graph_data(event)
-    print_event_summary(event)
+def Capture_stats(n = 1):
+    data_long = []
+    for i in range(n):
+        start_time = time.monotonic()
+        event = Gen_DM_particle_event()
+        end_time = time.monotonic()
+        duration = end_time - start_time
+        print('Time to generate all decays:', format_seconds(duration))
+        capture_num = len(event.vertices)
+        data = graph_data(event)
+        print_event_summary(event)
+        data_long += data
+    return(data_long)
 
 def print_event_summary(event):
-    print(event) 
-    ''' for if the event is large
+    #print(event)
     print(f"Event {event.event_number}")
     print(f"Particles: {len(event.particles)}")
     print(f"Vertices : {len(event.vertices)}")
-    print(f"Weights  : {event.weights}")
     print(f"Momentum units: {event.momentum_unit}")
-    print(f"Length units  : {event.length_unit}")
-    '''
+    print(f"Length units  : CM")
+    
 
 
 def graph_data(event):
@@ -127,14 +130,17 @@ def graph_data(event):
     for particle in event.particles:
         if particle.pid == 22:
             particle_e_list.append(particle.momentum.e)
-    plt.hist(particle_e_list, bins = int(np.sqrt(len(particle_e_list))))
-    plt.xlabel("Photon Energy")
-    plt.ylabel("Number of Photons")
-    plt.show()
+    return(particle_e_list)
 
 def main():
     print(pip.__version__) 
-    Capture_stats()
+    particle_e_list = Capture_stats(25)
+    plt.hist(particle_e_list, bins = int(np.sqrt(len(particle_e_list))))
+    plt.xlabel("Photon Energy")
+    plt.ylabel("Number of Photons")
+    plt.title("25 events. photon energies produced.")
+    plt.show()
+
 
 if __name__ == "__main__":
     main()
