@@ -17,13 +17,16 @@ from mpmath import besseljzero
 from scipy.special import comb
 # for parallelization
 from concurrent.futures import ProcessPoolExecutor
+# to speed up similar runs by caching complex values to the system
+import sqlite3 as sql
 
-
+conn = sql.connect("cache_R_10.db")
+cur = conn.cursor()
 
 
 # MARK: Class **************************************************************************
 class Rates:
-    def __init__(self, Z = 18, A = 40, mu_mult = .938, V0_mult = .246, R = 10.0):
+    def __init__(self, Z = 18, A = 40, mu_mult = .938, V0_mult = .246, R = 10.0, velDM = .001):
     ################################################################################
     # PARAMETERS
     ################################################################################
@@ -32,10 +35,11 @@ class Rates:
         self.e = np.sqrt(4.0 * np.pi / 137)         # electric charge, dimensionless
         self.mu = A * mu_mult                       # nucleus (reduced) mass, GeV
         self.V0 = A * V0_mult                       # potential depth, GeV (A* expectation value of the higgs)
-        self.k = .001                               # incoming DM momentum, GeV (.001 until initialized by set_rand_velocity. TODO: Fix DM lab frame momenta)
+        self.k = velDM * self.mu                         # incoming DM momentum, GeV (.001 until initialized by set_rand_velocity. TODO: Fix DM lab frame momenta)
         self.radius = R                             # DM radius, GeV^-1
         # For States**************************************************************
         self.kapS = np.sqrt(self.k**2 + 2.0 * self.mu * self.V0)    # interior momentum for scattering, initialized in rand_vel, GeV
+        self.pol_tensor_int = 8.0 * np.pi / 3.0
         # Caches******************************************************************
         self.levels = {}                            # cache for energy levels
         self.rad_int_B_cache = {}
@@ -54,19 +58,6 @@ class Rates:
     def spherical_jnz(self,l,n):
         return float(besseljzero(l+0.5,n))
 
-    def set_rand_velocity(self):
-        vx = sp.stats.norm.rvs(0, 10**(-3))
-        vy = sp.stats.norm.rvs(0, 10**(-3))
-        vz = sp.stats.norm.rvs(0, 10**(-3))
-        velDM = np.sqrt(vx**2 + vy**2 + vz**2)
-        self.k = velDM * self.mu
-        self.kapS = np.sqrt(self.k**2 + 2.0 * self.mu * self.V0)
-        return(vx,vy,vz,velDM)
-
-    def set_velocity(self,vx,vy,vz):
-        velDM = np.sqrt(vx**2 + vy**2 + vz**2)
-        self.k = velDM * self.mu
-        self.kapS = np.sqrt(self.k**2 + 2.0 * self.mu * self.V0)
     ################################################################################
     # STATES
     ################################################################################
@@ -80,13 +71,14 @@ class Rates:
             self.kapB_levels[(l,n)] = res
             return res
     # (positive) binding energy for state, GeV
+
     def EB(self,n,l):
         try:
-            return self.levels[(n,l)]
+            return self.levels[(n,l,self.radius)]
         except KeyError:
             res = self.V0 - 0.5 * self.kapB(n,l)**2 / self.mu
             if res > 0.:
-                self.levels[(n,l)] = res
+                self.levels[(n,l,self.radius)] = res
             return res
     # emitted photon energy/momentum, GeV
     def q(self,ni,li,nf,lf):
@@ -281,7 +273,7 @@ class Rates:
                         [4/3*cpq*spq, 2/3*spq2, 0],
                         [0, 0, 4/3]]
 
-    pol_tensor_int = 8.0 * np.pi / 3.0
+    
 
     ################################################################################
     # MAIN DECAY FUNCTIONS
