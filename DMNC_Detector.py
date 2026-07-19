@@ -31,7 +31,6 @@
 
 
 # Packages***********************************************************
-from calendar import c
 import matplotlib.pyplot as plt
 import numpy as np
 import random as rand
@@ -282,7 +281,6 @@ class Detector:
                 decay_dict = self.rates.Gamma_tot_B(n, l, m)
                 # Can be used to make sure we're below ns time
                 total_decay_rate = sum_dict_vals(decay_dict)
-                print("nl", n,l, "decay rate:",total_decay_rate)
                 new_state = key_val_by_weight(decay_dict)[0]
                 new_n, new_l, new_m = new_state
                 
