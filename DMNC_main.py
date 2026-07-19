@@ -9,7 +9,6 @@ import DMNC_Detector as dmnc_det     # Comes with plt, np, rand, time
 import DMNC_Rates as rts   # Access to many fundamental calculations
 import pip
 
-rates = rts.Rates()
 # Functions**********************************************************
 
 def sum_dict_vals(dictionary):
@@ -84,13 +83,12 @@ def Gen_DM_particle_event():
         try:
             det = dmnc_det.Detector(det_length, det_width, det_height, num_density_LAr)
             vx,vy,vz,v = det.random_entrance()
-            rates.set_velocity(vx,vy,vz) #initializing k (DM-Ar reduced mass momentum)
+            rates = rts.Rates(velDM = v)
             #setting cross-sections here to allow for random velocity implementation
             x_sec_dict = rates.xsec_v_tot_S() # keys: states, vals: X sects
             xsec_tot = sum_dict_vals(x_sec_dict)   # Total cross section, GeV^-2
             # hc is 1240 eV * nm: e-9 for eV -> GeV, e-7 for nm -> cm
             cm_from_inv_gev = 1240 / (2 * np.pi) * 1e-16
-
             xsec_cm = xsec_tot * cm_from_inv_gev**2  # Total cross section, cm^2
             det.set_xsec(x_sec_dict, xsec_cm)
             det.gen_capture_locs()
@@ -136,7 +134,7 @@ def graph_data(event):
 
 def main():
     print(pip.__version__) 
-    #Capture_stats()
+    Capture_stats()
 
 if __name__ == "__main__":
     main()
@@ -182,7 +180,7 @@ def plot_energies(n):
         plot_energies(n-1)
     else:
         return("done")
-print(plot_energies(85))
+print(plot_energies(nmax(1,0)))
 plt.show()
 '''
 
@@ -249,7 +247,7 @@ for i in range(1000):
 '''
 #Testing for proper rates.xsec_v_tot_s() functionality, plots vs R
 '''
-searches = [np.arange(10, 12, .001)]
+searches = [np.arange(0.01, 12, .01)]
 for j in searches:
     print("beginning task")
     i_list = []
@@ -287,6 +285,7 @@ for j in searches:
     plt.yscale('log')
     plt.xlabel('R value')
     plt.ylabel('cross-section total')
+    plt.title("Cross-section VS R from 0 - 12")
     plt.show()
     plt.plot(sec_len_list, sec_list,'.')
     plt.yscale('log')
