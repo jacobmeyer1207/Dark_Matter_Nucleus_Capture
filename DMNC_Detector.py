@@ -38,8 +38,9 @@ import random as rand
 import time
 import DMNC_Rates as rts
 import pyhepmc as hp
+import scipy as sp
 
-rates = rts.Rates()
+
 # Class**************************************************************
 class Detector:
     def __init__(self, length, width, height, num_density):
@@ -86,6 +87,8 @@ class Detector:
         # Arbitrary PID number for HepMC formatting.
         self.QBALL_PID = 1000000001
         self.BOUND_QBALL_AR_PID = 1000000002
+        #rates object for many math functions (intialized elsewhere)
+        self.rates = None
 
     def set_xsec(self,xsec_dict,xsec_cm):
         self.xsec_dict = xsec_dict
@@ -130,7 +133,11 @@ class Detector:
         # Randomly select face to enter (using weighted areas)
         enter_face = rand.uniform(0, self.area_tot)
         #randomly select velocities in x,y, and z directions, generate direction vector
-        vx,vy,vz,v = rates.set_rand_velocity()
+        vx = sp.stats.norm.rvs(0, 10**(-3))
+        vy = sp.stats.norm.rvs(0, 10**(-3))
+        vz = sp.stats.norm.rvs(0, 10**(-3))
+        v = np.sqrt(vx**2 + vy**2 + vz**2)
+        self.rates = rts.Rates(velDM = v)
         self.ux = vx/v
         self.uy = vy/v
         self.uz = vz/v
@@ -213,7 +220,7 @@ class Detector:
                    np.log(1 - rand_num ))
             # Convert to meters:
             cap_dist *= 1e-2
-            self.time += cap_dist/(rates.k/rates.mu)
+            self.time += cap_dist/(self.rates.k/self.rates.mu)
             self.x += self.ux * cap_dist
             self.y += self.uy * cap_dist
             self.z += self.uz * cap_dist
@@ -245,21 +252,21 @@ class Detector:
             vertex = hp.GenVertex(position)
             q_state = self.capture_locs[location]
             n,l,m = q_state
-            photon_energy = rates.EB(n, l)
+            photon_energy = self.rates.EB(n, l)
             ###use list of n,l,m and use parallelization for calculation of every photon_ct and photon_phi
-            photon_ct, photon_phi = rates.sample_S_ctq_phiq(n,l,m)
+            photon_ct, photon_phi = self.rates.sample_S_ctq_phiq(n,l,m)
             sin = (1 - photon_ct**2)**(0.5)
-            DM_px = rates.k * self.ux
-            DM_py = rates.k * self.uy
-            DM_pz = rates.k * self.uz
-            DM_e = np.sqrt(rates.k**2 + rates.mu**2)
+            DM_px = self.rates.k * self.ux
+            DM_py = self.rates.k * self.uy
+            DM_pz = self.rates.k * self.uz
+            DM_e = np.sqrt(self.rates.k**2 + self.rates.mu**2)
             phot_px = photon_energy * (sin * np.cos(photon_phi))
             phot_py = photon_energy * (sin * np.sin(photon_phi))
             phot_pz = photon_energy * (photon_ct)
             momentum = hp.FourVector(phot_px, phot_py, phot_pz, photon_energy)
             particle = hp.GenParticle(momentum, 22, 1)
             vertex.add_particle_out(particle)
-            momentum_Ar = hp.FourVector(0, 0, 0, rates.mu)
+            momentum_Ar = hp.FourVector(0, 0, 0, self.rates.mu)
             particle_Ar = hp.GenParticle(momentum_Ar,1000180400,4)
             vertex.add_particle_in(particle_Ar)
             momentum_DM = hp.FourVector(DM_px, DM_py, DM_pz, DM_e)
@@ -272,15 +279,15 @@ class Detector:
             for i in range(10000):
                 if n <= 1:
                     break
-                decay_dict = rates.Gamma_tot_B(n, l, m)
+                decay_dict = self.rates.Gamma_tot_B(n, l, m)
                 # Can be used to make sure we're below ns time
                 total_decay_rate = sum_dict_vals(decay_dict)
                 print("nl", n,l, "decay rate:",total_decay_rate)
                 new_state = key_val_by_weight(decay_dict)[0]
                 new_n, new_l, new_m = new_state
                 
-                photon_energy = rates.q(n, l, new_n, new_l)
-                photon_ct, photon_phi = rates.sample_ctq_phiq(n,l,m,new_n,new_l,new_m)
+                photon_energy = self.rates.q(n, l, new_n, new_l)
+                photon_ct, photon_phi = self.rates.sample_ctq_phiq(n,l,m,new_n,new_l,new_m)
                 photon_ct = photon_ct.real
                 photon_phi = photon_phi.real
                 sin = (1 - photon_ct**2)**(0.5)
