@@ -78,9 +78,7 @@ num_density_LAr = 1.39 * 6.02e23 / 39.948
 # Main***************************************************************
 
 def Gen_DM_particle_event():
-    i = 0
     while True:
-        i += 1
         try:
             det = dmnc_det.Detector(det_length, det_width, det_height, num_density_LAr)
             vx,vy,vz,v = det.random_entrance()
@@ -94,7 +92,6 @@ def Gen_DM_particle_event():
             det.set_xsec(x_sec_dict, xsec_cm)
             det.gen_capture_locs()
             event = det.photon_generation() 
-            print("number of failed captures:", i)
             print("Cross-section of capture in cm:", xsec_cm)
             print("DM velocity:",v,"c.")
             return(event)
