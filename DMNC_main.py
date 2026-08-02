@@ -8,7 +8,10 @@ import pyhepmc as hp
 import DMNC_Detector as dmnc_det     # Comes with plt, np, rand, time
 import DMNC_Rates as rts   # Access to many fundamental calculations
 import pip
+from collections import deque
 from concurrent.futures import ProcessPoolExecutor
+import traceback
+
 
 # Functions**********************************************************
 
@@ -75,13 +78,17 @@ det_height = 14                        # meters
 # Number density of Liquid Argon, cm^-3:
 num_density_LAr = 1.39 * 6.02e23 / 39.948
 
-# Main***************************************************************
+#####################################################################################################################################
+################################################ Simulation Generation Functions ####################################################
+#####################################################################################################################################
 
 def Gen_DM_particle_event():
+    start = time.monotonic()
     while True:
+        energies = []
         try:
             det = dmnc_det.Detector(det_length, det_width, det_height, num_density_LAr)
-            vx,vy,vz,v = det.random_entrance()
+            v = det.random_entrance()
             rates = rts.Rates(velDM = v)
             #setting cross-sections here to allow for random velocity implementation
             x_sec_dict = rates.xsec_v_tot_S() # keys: states, vals: X sects
@@ -91,26 +98,44 @@ def Gen_DM_particle_event():
             xsec_cm = xsec_tot * cm_from_inv_gev**2  # Total cross section, cm^2
             det.set_xsec(x_sec_dict, xsec_cm)
             det.gen_capture_locs()
-            event = det.photon_generation() 
-            print("Cross-section of capture in cm:", xsec_cm)
-            print("DM velocity:",v,"c.")
-            return(event)
-        except ValueError as ex:
-            continue
+            event, photon_list = det.photon_generation() 
+            for i in photon_list:
+                energies.append(i[1])
+            duration = time.monotonic() - start
+            print('time to generate event:', format_seconds(duration))
+            return(event, energies)
+        except Exception:
+            traceback.print_exc()
+            raise
+
+
+
+def process_one_event(_):
+
+    event, energies = Gen_DM_particle_event()
+
+    data = graph_data(event)
+
+    photons = len(event.particles)
+
+    captures = len(event.vertices)
+
+    return data, photons, captures, energies
+
 
 def Capture_stats(n = 1):
     data_long = []
-    for i in range(n):
-        start_time = time.monotonic()
-        event = Gen_DM_particle_event()
-        end_time = time.monotonic()
-        duration = end_time - start_time
-        print('Time to generate all decays:', format_seconds(duration))
-        capture_num = len(event.vertices)
-        data = graph_data(event)
-        print_event_summary(event)
-        data_long += data
-    return(data_long)
+    photon_long = 0
+    vertecies_long = 0
+    energies_long = []
+    with ProcessPoolExecutor() as executor:
+        for result in executor.map(process_one_event, range(n)):
+            data_long.extend(result[0])
+            photon_long += result[1]
+            vertecies_long += result[2]
+            energies_long += result [3]
+
+        return data_long, photon_long, vertecies_long, energies_long
 
 def print_event_summary(event):
     #print(event)
@@ -129,66 +154,172 @@ def graph_data(event):
             particle_e_list.append(particle.momentum.e)
     return(particle_e_list)
 
-def main():
-    print(pip.__version__) 
-    particle_e_list = Capture_stats(25)
-    plt.hist(particle_e_list, bins = int(np.sqrt(len(particle_e_list))))
-    plt.xlabel("Photon Energy")
-    plt.ylabel("Number of Photons")
-    plt.title("25 events. photon energies produced.")
-    plt.show()
 
 
-if __name__ == "__main__":
-    main()
 
-####Testing radial wavefunction for proper amplitudes, l = 1
+#####################################################################################################################################
+############################################################# Various Tests #########################################################
+#####################################################################################################################################
 '''
-def plot_wavefunc(n):
-    for j in range(n):
-        R_list = []
-        r_list = []
-        for i in range(2000):
-            r = 12*(i+1)/2001
-            r_list.append(r)
-            R = rates.RB(r,j+1,1)/r
-            R_list.append(R)
-        plt.plot(r_list, R_list, label=f"n={j+1}")
-        plt.legend()
-    plt.xlabel('r')
-    plt.ylabel('R_nl')
-    plt.title("All radial wave functions as a function of r for the p-wave bound states with l = 1")
-    plt.show()
-
-n = rates.nmax(1,0)
-plot_wavefunc(n)
-'''
-        
 ####Testing photon energy generation sampling#########################
 #plot in terms of n and l the photon energies
-'''
-def plot_energies(n):
+def plot_energies(n, rates):
+    print(n)
+    photon_energy_diff_tot = 0
+    c = 0
     if(n > 1):
         T_data_n_l = []
         l_list = []
-        for i in range(n-1):
-            curr_T_phot_e = -rates.EB(n,i)
-            if curr_T_phot_e < 0:
-                T_data_n_l.append(curr_T_phot_e)
+        phot_e = rates.EB(n,n-1)
+        for i in range(n-2):
+            curr_T_phot_e = rates.EB(n,i)
+            if curr_T_phot_e > 0:
+                c+=1
+                phot_energy_dif = phot_e - curr_T_phot_e
+                T_data_n_l.append(phot_energy_dif)
                 l_list.append(i)
+                photon_energy_diff_tot += phot_energy_dif
         print(len(T_data_n_l))
         plt.plot(l_list ,T_data_n_l, '.')
-        plt.xlabel("l values (different n is different color)")
+        plt.xlabel("E(l+1) - E(l) values (different n is different color)")
         plt.ylabel("Binding energy")
-        plot_energies(n-1)
+        if c != 0:
+            print("average photon energy transition (only l transitions):",photon_energy_diff_tot/c)
+        else:
+            print("no valid states to go to")
+        plot_energies(n-1, rates)
     else:
         return("done")
-print(plot_energies(nmax(1,0)))
-plt.show()
 '''
+'''
+def children(n, l, m, rates):
+    cross_sections = rates.Gamma_tot_B(n,l,m)
+    states = cross_sections.keys()
+    tot_cross_section = sum_dict_vals(cross_sections)
+    for i in states:
+        yield(i, cross_sections[i],tot_cross_section)
 
 
+def all_transitions(rates):
+    n = rates.nmax(1,0)
+    queue = deque([(n,1,0)])
+    visited = {(n,1,0)}
 
+    photon_energies = []
+
+    while queue:
+
+        parent = queue.popleft()
+        np, lp, mp = parent
+        E_parent = rates.EB(np, lp)
+        for child in children(np, lp, mp, rates):
+            state, cross_section, tot_cross_section = child
+            nc, lc, mc = state
+            E_child = rates.EB(nc, lc)
+            for i in range(int((cross_section/tot_cross_section)*100)):
+                photon_energies.append(
+                    (parent, state, E_parent - E_child)
+            )
+            if state not in visited:
+                visited.add(state)
+                queue.append(state)
+        print("l,n,m visited:", parent)
+    return photon_energies
+'''
+'''
+#Testing for proper rates.xsec_v_tot_s() functionality, plots vs R
+#search for rad_int_s functionality next, implement into one_search below.
+def one_search(r):
+    rates = rts.Rates(R = r)
+    x_sec_dict = rates.xsec_v_tot_S()
+    xsec_tot = sum_dict_vals(x_sec_dict)
+    if len(x_sec_dict) != 0:
+        print("cross-section:",xsec_tot)
+    else:
+        print("FAILRUE: NO AVAILABLE TRANSITIONS")
+        raise
+    return x_sec_dict, xsec_tot
+
+def search_all():
+    searches = [np.arange(10,12,.0005)]
+    for j in searches:
+        with ProcessPoolExecutor() as executor:
+            max_cross_section = 0
+            max_state_store = ()
+            sec_list = []
+            sec_len_list = []
+            l_plus_minus = []
+            NS_list = []
+            NB_list = []
+            NS = 0
+            NB = 0
+            for R, result in zip(j, executor.map(one_search, j)):
+                rates = rts.Rates(R = R)
+                lpm = 0
+                x_sec_dict, xsec_tot = result
+                max_state = max(x_sec_dict, key=x_sec_dict.get)
+                #l = 1
+                n,l,m = max_state
+                if l > 0:
+                    #n = rates.nmax(l-1, 0)
+                    lminus = rates.rad_int_S(l - 1, n,l)
+                    lpm += lminus * rates.NS(l-1) * rates.NB(n,l)
+                    NS += rates.NS(l-1)
+
+                #n = rates.nmax(l+1, 0)
+                lplus = rates.rad_int_S(l + 1, n,l)
+                lpm += lplus * rates.NS(l+1) * rates.NB(n,l)
+                NS += rates.NS(l+1)
+                NB = rates.NB(n,l)
+                NB_list.append(NB)
+                NS_list.append(NS)
+                l_plus_minus.append(lpm)
+                if max_cross_section < x_sec_dict[max_state]:
+                    max_cross_section = x_sec_dict[max_state]
+                    max_state_store = max_state
+                sec_list.append(xsec_tot)
+                sec_len_list.append(len(x_sec_dict))
+            maxS = max(sec_list)
+            print("max cross section:",maxS)
+            print("max state:", max_state_store, "cross-section:", max_cross_section)
+            print("associated R value:",R)
+            print("average cross section:", sum(sec_list)/len(sec_list))
+            n,l,m = max_state_store
+            print('max state radial integrals')
+            if l > 0:
+                lminus = rates.rad_int_S(l - 1, n,l)
+                print('l - 1:', lminus)
+                print('normalized l-1:',lminus * rates.NS(l-1) * rates.NB(n,l))
+            lplus = rates.rad_int_S(l + 1, n,l)
+            print('l+1:', lplus)
+            print('normalized l+1:',lplus * rates.NS(l+1) * rates.NB(n,l))
+            plt.plot(j,sec_list,'.')
+            plt.yscale('log')
+            plt.xlabel('R value')
+            plt.ylabel('cross-section total')
+            plt.title("Cross-section VS R from 9 - 11")
+            plt.show()
+            plt.plot(sec_len_list, sec_list,'.')
+            plt.yscale('log')
+            plt.xlabel('length of cross section list')
+            plt.ylabel('cross-section total')
+            plt.show()
+            plt.plot(j, l_plus_minus,'.')
+            plt.yscale('log')
+            plt.xlabel('R value')
+            plt.ylabel('l+1 + l-1 normalized wavefunction correlation(max states only)')
+            plt.show()
+            plt.plot(j, NB_list,'.')
+            plt.yscale('log')
+            plt.xlabel('R value')
+            plt.ylabel('l+1 + l-1 normalized wavefunction correlation(max states only)')
+            plt.show()
+            plt.plot(j, NS_list,'.')
+            plt.yscale('log')
+            plt.xlabel('R value')
+            plt.ylabel('l+1 + l-1 normalized wavefunction correlation(max states only)')
+            plt.show()
+'''
 
 ####Testing methods of sampling angles################################
 #do simple histogram test
@@ -248,53 +379,70 @@ for i in range(1000):
     if i == 99:
         print('Success! All tests passed')
 '''
-#Testing for proper rates.xsec_v_tot_s() functionality, plots vs R
-'''
-searches = [np.arange(0.01, 12, .01)]
-for j in searches:
-    print("beginning task")
-    i_list = []
-    sec_list = []
-    sec_len_list = []
-    for i in j:
-        rates = rts.Rates(R = i)
-        x_sec_dict = rates.xsec_v_tot_S() # keys: states, vals: X sects
-        xsec_tot = sum_dict_vals(x_sec_dict)   # Total cross section, GeV^-2
-        if len(x_sec_dict) != 0:
-            largest_state = max(x_sec_dict.items(), key=lambda x: x[1])
 
-        print(
-                "radius:",rates.radius,
-                #"largest state:",largest_state[0],     # (n,l,m)
-                #"cross-section:",largest_state[1],     # cross section
-                "total cross-section",xsec_tot,
-                #"fraction of total:",largest_state[1]/xsec_tot,
-            )
-        if len(x_sec_dict) != 0:
-            print("largest state:",largest_state[0],     # (n,l,m)
-            "cross-section:",largest_state[1],
-            "fraction of total:",largest_state[1]/xsec_tot)
-            print("average cross-section:",xsec_tot/len(x_sec_dict))
-        else:
-            print("ERROR: NO CROSS-SECTIONS FOUND.")
-        sec_len_list.append(len(x_sec_dict))
-        i_list.append(i)
-        sec_list.append(xsec_tot)
-    maxS = max(sec_list)
-    print("max cross section:",maxS)
-    print("associated R value:",i_list[sec_list.index(maxS)])
-    print("average cross section:", sum(sec_list)/len(sec_list))
-    plt.plot(i_list,sec_list,'.')
-    plt.yscale('log')
-    plt.xlabel('R value')
-    plt.ylabel('cross-section total')
-    plt.title("Cross-section VS R from 0 - 12")
+'''
+####Testing radial wavefunction for proper amplitudes, l = 1
+rates = rts.Rates()
+def plot_wavefunc(n):
+    for j in range(n):
+        NB = rates.NB(j+1,1)
+        R_list = []
+        r_list = []
+        for i in range(2000):
+            r = 12*(i+1)/2001
+            r_list.append(r)
+            R = rates.RB(r,j+1,1) * NB
+            R_list.append(R)
+        plt.plot(r_list, R_list, label=f"n={j+1}")
+        plt.legend()
+    plt.xlabel('r')
+    plt.ylabel('R_nl')
+    plt.title("All radial wave functions as a function of r for the p-wave bound states with l = 1")
     plt.show()
-    plt.plot(sec_len_list, sec_list,'.')
-    plt.yscale('log')
-    plt.xlabel('length of cross section list')
-    plt.ylabel('cross-section total')
+
+n = rates.nmax(1,0)
+plot_wavefunc(n)
+'''
+#####################################################################################################################################
+############################################################# Main ##################################################################
+#####################################################################################################################################
+def main():
+
+    ########### Testing block ##############
+    #search_all()
+    '''
+    E = []
+    rates = rts.Rates()
+    photon_energies = all_transitions(rates)
+    for i in photon_energies:
+        E.append(i[2])
+    plt.hist(E, bins = int(np.sqrt(len(E))))
+    plt.xlabel('photon energies')
+    plt.ylabel('number of photons')
     plt.show()
     '''
+    ########## Simulation block ############
+    n = 10
+    print(pip.__version__) 
+    start_time = time.monotonic()
+    particle_e_list, photon_num, capture_num, energies_list = Capture_stats(n)
+    end_time = time.monotonic()
+    duration = end_time - start_time
+    print('Time to generate all events:', format_seconds(duration))
+    print('Photons per second:', photon_num/duration)
+    print('seconds per capture:', duration/capture_num)
+    print('Total photons:', photon_num)
+    plt.hist(particle_e_list, bins = int(np.sqrt(len(particle_e_list))))
+    plt.xlabel("Photon Energy")
+    plt.ylabel("Number of Photons")
+    plt.title(f"{n} event(s). Photon energies produced:")
+    plt.show()
+    
+
+if __name__ == "__main__":
+    main()
+        
+
+
 
 
