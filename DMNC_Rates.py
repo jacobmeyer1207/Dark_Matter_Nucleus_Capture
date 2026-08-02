@@ -3,7 +3,6 @@
 ################################################################################
 
 import scipy as sp
-
 import numpy as np
 # Bessel functions appear as the wavefunctions here
 from scipy.special import spherical_jn,spherical_yn,jv,jvp,yvp
@@ -18,11 +17,17 @@ from scipy.special import comb
 # global cache generation
 from diskcache import Cache
 
+
+#####################################################################################################################################
+###################################################### Cache Block ##################################################################
+#####################################################################################################################################
+
 cache = Cache('./DMNC_RATES_CACHE')
 #cache.clear()
+
 # Derivatives of spherical bessel functions
 def spherical_jnp(l,x):
-        return -0.5 * spherical_jn(l,x) / x + np.sqrt(0.5 * np.pi / x) * jvp(l+0.5,x)
+    return -0.5 * spherical_jn(l,x) / x + np.sqrt(0.5 * np.pi / x) * jvp(l+0.5,x)
 def spherical_ynp(l,x):
     return -0.5 * spherical_yn(l,x) / x + np.sqrt(0.5 * np.pi / x) * yvp(l+0.5,x)
 # Spherical bessel function zeros as floats (no mpmath)
@@ -30,50 +35,53 @@ def spherical_jnz(l,n):
     return float(besseljzero(l+0.5,n))
 
 @cache.memoize()
-def EB_cache(n,l,Z,A,e,mu,V0,radius):
-    res = V0 - 0.5 * kapB_cache(n,l,Z,A,e,mu,V0,radius)**2 / mu
-    #if res > 0.:
-        #levels[(n,l,radius)] = res
+def EB_cache(n,l,mu,V0,radius):
+    res = V0 - 0.5 * kapB_cache(n,l,radius)**2 / mu
     return res
 
 @cache.memoize()
-def kapB_cache(n,l,Z,A,e,mu,V0,radius):
+def kapB_cache(n,l,radius):
     res = spherical_jnz(l,n)/radius
     return res
 
 @cache.memoize()
-def q_cache(ni,li,nf,lf,Z,A,e,mu,V0,radius):
-    E_ph = - EB_cache(ni,li,Z,A,e,mu,V0,radius) + EB_cache(nf,lf,Z,A,e,mu,V0,radius)
+def q_cache(ni,li,nf,lf,mu,V0,radius):
+    E_ph = - EB_cache(ni,li,mu,V0,radius) + EB_cache(nf,lf,mu,V0,radius)
     if E_ph <= 0.:
         raise ValueError('Attempting transition from lower energy state to higher energy state')
     return E_ph
 
 @cache.memoize()
-def nmax_cache(l,Emin,Z,A,e,mu,V0,radius):
-    res = int(np.ceil((np.sqrt(2.0*mu*V0)*radius)/np.pi - 0.5 * l))
-    while res > 0 and EB_cache(res,l,Z,A,e,mu,V0,radius) < Emin:
-        res -= 1
-    while res + 1 > 0 and EB_cache(res+1,l,Z,A,e,mu,V0,radius) > Emin:
-        res += 1
-    return res
+def nmax_cache(l,Emin,mu,V0,radius):
+    kR = np.sqrt(2.0 * mu * V0) * radius
+    n = 1
+    while spherical_jnz(l, n) < kR:
+        n += 1 
+    if Emin != 0:
+        while n > 0 and EB_cache(n,l,mu,V0,radius) < Emin:
+            n -= 1
+        while n + 1 > 0 and EB_cache(n+1,l,mu,V0,radius) > Emin:
+            n += 1
+    return n
+    
 
 @cache.memoize()
-def NB_cache(n,l,Z,A,e,mu,V0,radius):    
+def NB_cache(n,l,radius):    
     normint = -0.25*(np.pi*radius**3*jv(-0.5 + l,spherical_jnz(l,n))*jv(1.5 + l,spherical_jnz(l,n)))/spherical_jnz(l,n)
     return 1.0/np.sqrt(normint)
 
-def RB(r,n,l,Z,A,e,mu,V0,radius):
-    return spherical_jn(l,kapB_cache(n,l,Z,A,e,mu,V0,radius)*r)
+def RB(r,n,l,radius):
+    return spherical_jn(l,kapB_cache(n,l,radius)*r)
 
 @cache.memoize()
-def rad_int_B_cache(ni,li,nf,lf,Z,A,e,mu,V0,radius,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
+def rad_int_B_cache(ni,li,nf,lf,radius,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
     if abs(li-lf) != 1:
         raise ValueError('Calculating amplitude for unallowed transition')
-    res = rad_int_cache(lambda r : RB(r,ni,li,Z,A,e,mu,V0,radius),kapB_cache(ni,li,Z,A,e,mu,V0,radius),li,lambda r: RB(r,nf,lf,Z,A,e,mu,V0,radius),kapB_cache(nf,lf,Z,A,e,mu,V0,radius),lf,Z,A,e,mu,V0,radius,force_full,subinterval_periods,approx_threshold)
+    res = rad_int_cache(lambda r : RB(r,ni,li,radius),kapB_cache(ni,li,radius),li,lambda r: RB(r,nf,lf,radius),kapB_cache(nf,lf,radius),lf,radius,force_full,subinterval_periods,approx_threshold)
     return res
 
 @cache.memoize()
-def sph_prod_cache(li,mi,mr,lf,mf,Z,A,e,mu,V0,radius):
+def sph_prod_cache(li,mi,mr,lf,mf):
     if abs(li-lf) != 1 or mi+mr != mf:
         return 0.0
     coef = np.sqrt(3.0/(4.0 * np.pi * (2*lf+1) * (2*li+1)))
@@ -87,31 +95,46 @@ def sph_prod_cache(li,mi,mr,lf,mf,Z,A,e,mu,V0,radius):
     return coef * clres
 
 @cache.memoize()
-def amp_B_radial_cache(ni,li,nf,lf,Z,A,e,mu,V0,radius,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
-    return Z * e * q_cache(ni,li,nf,lf,Z,A,e,mu,V0,radius) * NB_cache(ni,li,Z,A,e,mu,V0,radius) * NB_cache(nf,lf,Z,A,e,mu,V0,radius) * rad_int_B_cache(ni,li,nf,lf,Z,A,e,mu,V0,radius,force_full,subinterval_periods,approx_threshold)
+def amp_B_radial_cache(ni,li,nf,lf,Z,e,mu,V0,radius,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
+    return Z * e * q_cache(ni,li,nf,lf,mu,V0,radius) * NB_cache(ni,li,radius) * NB_cache(nf,lf,radius) * rad_int_B_cache(ni,li,nf,lf,radius,force_full,subinterval_periods,approx_threshold)
 
 @cache.memoize()
-def Gamma_B_cache(ni,li,mi,nf,lf,mf,pol_tensor_int,Z,A,e,mu,V0,radius):
-    amp = amp_B_cache(ni,li,mi,nf,lf,mf,Z,A,e,mu,V0,radius)
-    return np.real(q_cache(ni,li,nf,lf,Z,A,e,mu,V0,radius) * pol_tensor_int * np.vdot(amp, amp) / (8.0 * np.pi**2))
+def Gamma_B_cache(ni,li,mi,nf,lf,mf,pol_tensor_int,Z,e,mu,V0,radius,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
+    amp = amp_B_cache(ni,li,mi,nf,lf,mf,Z,e,mu,V0,radius,force_full,subinterval_periods,approx_threshold)
+    return np.real(q_cache(ni,li,nf,lf,mu,V0,radius) * pol_tensor_int * np.vdot(amp, amp) / (8.0 * np.pi**2))
+
+@cache.memoize()
+def amp_B_cache(ni,li,mi,nf,lf,mf,Z,e,mu,V0,radius,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
+    amp_r = amp_B_radial_cache(ni,li,nf,lf,Z,e,mu,V0,radius,force_full,subinterval_periods,approx_threshold)
+    return amp_r * ang_int_cache(li,mi,lf,mf)
+
+@cache.memoize()
+def ang_int_cache(li,mi,lf,mf):
+    if abs(li-lf) != 1 or abs(mi-mf) > 1:
+        return 0.0
+    sph_x = sph_prod_cache(li,mi,-1,lf,mf)-sph_prod_cache(li,mi,1,lf,mf)
+    sph_y = 1j*(sph_prod_cache(li,mi,-1,lf,mf)+sph_prod_cache(li,mi,1,lf,mf))
+    sph_z = np.sqrt(2.0) * sph_prod_cache(li,mi,0,lf,mf)
+    return np.sqrt(2.0*np.pi/3.0) * np.array([sph_x,sph_y,sph_z])
+
+@cache.memoize()
+def Gamma_tot_B_cache(n,l,m,pol_tensor_int,Z,e,mu,V0,radius):
+    res = {}
+    for lf in [l-1,l+1]:
+        if lf < 0:
+            continue
+        nf = nmax_cache(lf,EB_cache(n,l,mu,V0,radius),mu,V0,radius)
+        while nf > 0 and q_cache(n,l,nf,lf,mu,V0,radius)*radius < np.pi:
+            for mf in range(m-1,m+2):
+                if mf > lf or mf < -lf:
+                    continue
+                res[nf,lf,mf] = Gamma_B_cache(n,l,m,nf,lf,mf,pol_tensor_int,Z,e,mu,V0,radius)
+            nf -= 1
+    return res
 
 #############################FIXME: unfinished caches. functional for other cache calls, however don't cache values themselves. (errors from using memoize as method)
 #@cache.memoize()
-def amp_B_cache(ni,li,mi,nf,lf,mf,Z,A,e,mu,V0,radius):
-    amp_r = amp_B_radial_cache(ni,li,nf,lf,Z,A,e,mu,V0,radius,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0)
-    return amp_r * ang_int_cache(li,mi,lf,mf,Z,A,e,mu,V0,radius)
-
-#@cache.memoize()
-def ang_int_cache(li,mi,lf,mf,Z,A,e,mu,V0,radius):
-    if abs(li-lf) != 1 or abs(mi-mf) > 1:
-        return 0.0
-    sph_x = sph_prod_cache(li,mi,-1,lf,mf,Z,A,e,mu,V0,radius)-sph_prod_cache(li,mi,1,lf,mf,Z,A,e,mu,V0,radius)
-    sph_y = 1j*(sph_prod_cache(li,mi,-1,lf,mf,Z,A,e,mu,V0,radius)+sph_prod_cache(li,mi,1,lf,mf,Z,A,e,mu,V0,radius))
-    sph_z = np.sqrt(2.0) * sph_prod_cache(li,mi,0,lf,mf,Z,A,e,mu,V0,radius)
-    return np.sqrt(2.0*np.pi/3.0) * np.array([sph_x,sph_y,sph_z])
-
-#@cache.memoize()
-def rad_int_cache(Ri,kapi,li,Rf,kapf,lf,Z,A,e,mu,V0,radius,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
+def rad_int_cache(Ri,kapi,li,Rf,kapf,lf,radius,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
     if kapi*radius < approx_threshold or kapf*radius < approx_threshold or force_full:
         print('Calculating full radial integral... may be slow')
         subinterval_lim = max(50,int(np.ceil(max(kapi*radius,kapf*radius)/subinterval_periods)))
@@ -128,8 +151,16 @@ def rad_int_cache(Ri,kapi,li,Rf,kapf,lf,Z,A,e,mu,V0,radius,force_full = False,su
         res += kap_sum**2 * (-1)**((1+li-lf)/2) * (kap_dif_R*np.cos(kap_dif_R) - np.sin(kap_dif_R))
         res /= 2.0 * kapi * kapf * kap_sum**2 * kap_dif**2
     return res
+#####################################################################################################################################
+######################################################## End Of Block ###############################################################
+#####################################################################################################################################
 
-# MARK: Class **************************************************************************
+
+
+#####################################################################################################################################
+######################################################## Rates Class ################################################################
+#####################################################################################################################################
+
 class Rates:
     def __init__(self, Z = 18, A = 40, mu_mult = .938, V0_mult = .246, R = 10.0, velDM = .001):
     ################################################################################
@@ -140,7 +171,7 @@ class Rates:
         self.e = np.sqrt(4.0 * np.pi / 137)         # electric charge, dimensionless
         self.mu = A * mu_mult                       # nucleus (reduced) mass, GeV
         self.V0 = A * V0_mult                       # potential depth, GeV (A* expectation value of the higgs)
-        self.k = velDM * self.mu                         # incoming DM momentum, GeV (.001 until initialized by set_rand_velocity. TODO: Fix DM lab frame momenta)
+        self.k = velDM * self.mu                    # incoming DM momentum, GeV 
         self.radius = R                             # DM radius, GeV^-1
         # For States**************************************************************
         self.kapS = np.sqrt(self.k**2 + 2.0 * self.mu * self.V0)    # interior momentum for scattering, initialized in rand_vel, GeV
@@ -160,23 +191,30 @@ class Rates:
 
     # momentum inside potential well for bound state, GeV
     def kapB(self,n,l):
-        return kapB_cache(n,l,self.Z,self.A,self.e,self.mu,self.V0,self.radius)
+        return kapB_cache(n,l,self.radius)
 
     # (positive) binding energy for state, GeV
     def EB(self,n,l):
-        return EB_cache(n,l,self.Z,self.A,self.e,self.mu,self.V0,self.radius)
+        return EB_cache(n,l,self.mu,self.V0,self.radius)
 
     # emitted photon energy/momentum, GeV
     def q(self,ni,li,nf,lf):
-        return q_cache(ni,li,nf,lf,self.Z,self.A,self.e,self.mu,self.V0,self.radius)
+        return q_cache(ni,li,nf,lf,self.mu,self.V0,self.radius)
 
-    # Maximum n allowed to have bound states below top of potential
+    # Maximum n allowed to have bound states below top of potential (Bound state)
     def nmax(self,l,Emin):
-        return nmax_cache(l,Emin,self.Z,self.A,self.e,self.mu,self.V0,self.radius)
+        return nmax_cache(l,Emin,self.mu,self.V0,self.radius)
+
+    # Maximum n allowed to have bound states below top of potential. Different than nmaxB.
+    def nmaxS(self,l):
+        n_test = 1
+        while np.sqrt(2.0 * self.mu * self.V0) * self.radius > spherical_jnz(l,n_test):
+            n_test += 1
+        return n_test - 1
 
     # normalization for bound state, GeV^-3/2
     def NB(self,n,l):
-        return NB_cache(n,l,self.Z,self.A,self.e,self.mu,self.V0,self.radius)
+        return NB_cache(n,l,self.radius)
 
     # boundary conditions for scattering state
     def bcs(self,Ns,delta,l):
@@ -224,7 +262,7 @@ class Rates:
     # cache the results to save time
     # added approximate result at large kappa R
     def rad_int_B(self,ni,li,nf,lf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
-        return rad_int_B_cache(ni,li,nf,lf,self.Z,self.A,self.e,self.mu,self.V0,self.radius,force_full,subinterval_periods,approx_threshold)
+        return rad_int_B_cache(ni,li,nf,lf,self.radius,force_full,subinterval_periods,approx_threshold)
 
     # radial intergral for scattering in dipole approximation
     # dimension GeV^-4
@@ -241,19 +279,16 @@ class Rates:
     # Triple product of spherical harmonics, integrated
     # This combination appears in the angular integrals
     def sph_prod(self,li,mi,mr,lf,mf):
-        return sph_prod_cache(li,mi,mr,lf,mf,self.Z,self.A,self.e,self.mu,self.V0,self.radius)
+        return sph_prod_cache(li,mi,mr,lf,mf)
 
     # Angular integral assembled for all three components
     def ang_int(self,li,mi,lf,mf):
-        return ang_int_cache(li,mi,lf,mf,self.Z,self.A,self.e,self.mu,self.V0,self.radius)
+        return ang_int_cache(li,mi,lf,mf)
 
     # amplitude
     # dimesionless
-    def amp_B_radial(self,ni,li,nf,lf,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
-        return amp_B_radial_cache(ni,li,nf,lf,self.Z,self.A,self.e,self.mu,self.V0,self.radius,force_full,subinterval_periods,approx_threshold)
-
     def amp_B(self,ni,li,mi,nf,lf,mf):
-        return amp_B_cache(ni,li,mi,nf,lf,mf,self.Z,self.A,self.e,self.mu,self.V0,self.radius)
+        return amp_B_cache(ni,li,mi,nf,lf,mf,self.Z,self.e,self.mu,self.V0,self.radius)
 
     # amplitude for scattering
     # in GeV^-3/2
@@ -277,7 +312,7 @@ class Rates:
             spq = - spq
         return np.array([[ ctq2*cpq2 + spq2, -stq2*cpq*spq,    -ctq*stq*cpq ],
                          [ -stq2*cpq*spq,    cpq2 + ctq2*spq2, -ctq*stq*spq ],
-                         [ -ctq*stq*cpq,     -ctq*stq*spq,     stq2]])
+                         [ -ctq*stq*cpq,     -ctq*stq*spq ,     stq2]])
 
     def pol_tensor_phi_int_part(self,ctq,phiq):
         ctq2 = ctq**2
@@ -348,43 +383,15 @@ class Rates:
     # ni,li,mi: initial state quantum numbers
     # nf,lf,mf: final state quantum numbers
     def Gamma_B(self,ni,li,mi,nf,lf,mf):
-        return Gamma_B_cache(ni,li,mi,nf,lf,mf,self.pol_tensor_int,self.Z,self.A,self.e,self.mu,self.V0,self.radius) # decay rate to all allowed states in GeV
+        return Gamma_B_cache(ni,li,mi,nf,lf,mf,self.pol_tensor_int,self.Z,self.e,self.mu,self.V0,self.radius) # decay rate to all allowed states in GeV
 
     # decay rate to all allowed states in GeV
     # n,l,m: quantum numbers of decaying state
     # Returns: all allowed n,l,m final states with their respective decay rate
-    '''parallelize TODO'''
-
-
-    #def worker(self,job):
-    #    ni,li,mi,nf,lf,mf,force_full,subinterval_periods,approx_threshold = job
-    #    amp_r = amp_B_radial(ni,li,nf,lf,force_full,subinterval_periods,approx_threshold)
-    #    return self.Gamma_B(li,mi,lf,mf,amp_r)
 
     def Gamma_tot_B(self,n,l,m,force_full = False,subinterval_periods = 8.0,approx_threshold = 10.0):
-        res = {}
-        #job_list = []
-        #states = []
-        for lf in [l-1,l+1]:
-            if lf < 0:
-                continue
-            nf = self.nmax(lf,self.EB(n,l))
-            while nf > 0 and self.q(n,l,nf,lf)*self.radius < np.pi:
-                #changed from m-1 to m+2 since python doesn't account for the m+1 if stopping there, only reaches m.
-                for mf in range(m-1,m+2):
-                    if mf > lf or mf < -lf:
-                        continue
-                    #parallelizing in the future (Use chunksize = larger number to increase efficiency)
-                    #job_list.append((n,l,m,nf,lf,mf,force_full,subinterval_periods,approx_threshold))
-                    res[nf,lf,mf] = self.Gamma_B(n,l,m,nf,lf,mf)
-                nf -= 1
-                #with ProcessPoolExecutor() as executor:
-                #    res_results = executor.map(self.worker, job_list)
+        return Gamma_tot_B_cache(n,l,m,self.pol_tensor_int,self.Z,self.e,self.mu,self.V0,self.radius)
 
-                #    res = dict(zip(states,res_results))
-        return res
-
-    
 
 
     ################################################################################
@@ -407,12 +414,11 @@ class Rates:
         return np.real(self.EB(nf,lf) * self.pol_tensor_int * np.linalg.multi_dot([np.conjugate(amp),amp]) / (8.0 * np.pi**2))
 
     # cross section to all allowed states in GeV^-2
-    # Possible revisions of xsec_v_tot_S will be written as comments within the function. Assuming that total should include n < nmax along with other quantum numbers for corrections 
+    # Possible revisions of xsec_v_tot_S will be written as comments within the function.
     def xsec_v_tot_S(self,force_full = False, subinterval_periods = 8.0, approx_threshold = 10.0):
         res = {}
         for lf in range(int(np.ceil(self.k*self.radius)) + 1):
-            nf = self.nmax(lf,0.) 
-            #new code. accounts for nf<nmax that satisfies conditions. higher cross-section for many values of R.
+            nf = self.nmaxS(lf)
             while nf > 0 and (self.EB(nf,lf) + self.k**2/(2*self.mu))*self.radius < np.pi:
                 for mf in range(-1,2):
                     if mf > lf or mf < -lf:
@@ -423,9 +429,10 @@ class Rates:
         return res
 
     ################################################################################
-    # SAMPLE cos(theta)
+    # SAMPLE cos(theta), phi
     ################################################################################
 
+    #samples cos(theta) via inversion of CDF and then uses that cos(theta) to perform rejection sampling for phiq
     def sample_ctq_phiq(self,ni,li,mi,nf,lf,mf):
             y = np.random.random()
             if mi == mf:
@@ -437,7 +444,7 @@ class Rates:
                 phiq = self.sample_B_phiq(ni,li,mi,nf,lf,mf,(-1.0/delta + delta))
                 return (-1.0/delta + delta), phiq
             raise ValueError('Transition not allowed')
-
+    # Pure rejection sampling of ctq, phiq. Exists for testing purposes.
     def sample_S_ctq_phiq(self,nf,lf,mf):
         selection = False
         while selection == False:
