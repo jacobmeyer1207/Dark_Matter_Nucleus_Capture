@@ -16,6 +16,7 @@ from mpmath import besseljzero
 from scipy.special import comb
 # global cache generation
 from diskcache import Cache
+from functools import lru_cache
 
 
 #####################################################################################################################################
@@ -31,43 +32,52 @@ def spherical_jnp(l,x):
 def spherical_ynp(l,x):
     return -0.5 * spherical_yn(l,x) / x + np.sqrt(0.5 * np.pi / x) * yvp(l+0.5,x)
 # Spherical bessel function zeros as floats (no mpmath)
+
 def spherical_jnz(l,n):
-    return float(besseljzero(l+0.5,n))
+    if n > 100 and l/n < .1:
+        return (n + l/2) * np.pi
+    else:
+        return spherical_jnz_full(l,n)
 
 @cache.memoize()
+def spherical_jnz_full(l,n):
+    return float(besseljzero(l+0.5,n))
+
 def EB_cache(n,l,mu,V0,radius):
     res = V0 - 0.5 * kapB_cache(n,l,radius)**2 / mu
     return res
 
-@cache.memoize()
 def kapB_cache(n,l,radius):
     res = spherical_jnz(l,n)/radius
     return res
 
-@cache.memoize()
 def q_cache(ni,li,nf,lf,mu,V0,radius):
     E_ph = - EB_cache(ni,li,mu,V0,radius) + EB_cache(nf,lf,mu,V0,radius)
     if E_ph <= 0.:
         raise ValueError('Attempting transition from lower energy state to higher energy state')
     return E_ph
 
-@cache.memoize()
-def nmax_cache(l,Emin,mu,V0,radius):
-    kR = np.sqrt(2.0 * mu * V0) * radius
-    n = 1
-    while spherical_jnz(l, n) < kR:
-        n += 1 
-    if Emin != 0:
-        while n > 0 and EB_cache(n,l,mu,V0,radius) < Emin:
-            n -= 1
-        while n + 1 > 0 and EB_cache(n+1,l,mu,V0,radius) > Emin:
-            n += 1
-    return n
+@lru_cache(maxsize=None)
+def nmax_cache(l,Emin,mu,V0,radius, n=0):
+    if n == 0:
+        res = int(np.ceil((np.sqrt(2.0*mu*V0)*radius)/np.pi - 0.5 * l))
+        while res > 0 and EB_cache(res,l,mu,V0,radius) < Emin:
+            res -= 1
+        while res + 1 > 0 and EB_cache(res+1,l,mu,V0,radius) > Emin:
+            res += 1
+    else:
+        res = n
+        while res > 0 and EB_cache(res,l,mu,V0,radius) < Emin:
+            res -= 1
+        while res + 1 > 0 and EB_cache(res+1,l,mu,V0,radius) > Emin:
+            res += 1
+    return res
     
 
 @cache.memoize()
-def NB_cache(n,l,radius):    
-    normint = -0.25*(np.pi*radius**3*jv(-0.5 + l,spherical_jnz(l,n))*jv(1.5 + l,spherical_jnz(l,n)))/spherical_jnz(l,n)
+def NB_cache(n,l,radius):   
+    z = spherical_jnz(l,n)
+    normint = -0.25*(np.pi*radius**3*jv(-0.5 + l,z)*jv(1.5 + l,z))/z
     return 1.0/np.sqrt(normint)
 
 def RB(r,n,l,radius):
@@ -80,7 +90,7 @@ def rad_int_B_cache(ni,li,nf,lf,radius,force_full = False,subinterval_periods = 
     res = rad_int_cache(lambda r : RB(r,ni,li,radius),kapB_cache(ni,li,radius),li,lambda r: RB(r,nf,lf,radius),kapB_cache(nf,lf,radius),lf,radius,force_full,subinterval_periods,approx_threshold)
     return res
 
-@cache.memoize()
+@lru_cache(maxsize=None)
 def sph_prod_cache(li,mi,mr,lf,mf):
     if abs(li-lf) != 1 or mi+mr != mf:
         return 0.0
@@ -108,7 +118,7 @@ def amp_B_cache(ni,li,mi,nf,lf,mf,Z,e,mu,V0,radius,force_full = False,subinterva
     amp_r = amp_B_radial_cache(ni,li,nf,lf,Z,e,mu,V0,radius,force_full,subinterval_periods,approx_threshold)
     return amp_r * ang_int_cache(li,mi,lf,mf)
 
-@cache.memoize()
+@lru_cache(maxsize=None)
 def ang_int_cache(li,mi,lf,mf):
     if abs(li-lf) != 1 or abs(mi-mf) > 1:
         return 0.0
@@ -123,7 +133,7 @@ def Gamma_tot_B_cache(n,l,m,pol_tensor_int,Z,e,mu,V0,radius):
     for lf in [l-1,l+1]:
         if lf < 0:
             continue
-        nf = nmax_cache(lf,EB_cache(n,l,mu,V0,radius),mu,V0,radius)
+        nf = nmax_cache(lf,EB_cache(n,l,mu,V0,radius),mu,V0,radius, n)
         while nf > 0 and q_cache(n,l,nf,lf,mu,V0,radius)*radius < np.pi:
             for mf in range(m-1,m+2):
                 if mf > lf or mf < -lf:
@@ -162,7 +172,7 @@ def rad_int_cache(Ri,kapi,li,Rf,kapf,lf,radius,force_full = False,subinterval_pe
 #####################################################################################################################################
 
 class Rates:
-    def __init__(self, Z = 18, A = 40, mu_mult = .938, V0_mult = .246, R = 10.0, velDM = .001):
+    def __init__(self, Z = 8, A = 16, mu_mult = .938, V0_mult = .032, R = 10.0, velDM = .001):
     ################################################################################
     # PARAMETERS
     ################################################################################
@@ -202,8 +212,8 @@ class Rates:
         return q_cache(ni,li,nf,lf,self.mu,self.V0,self.radius)
 
     # Maximum n allowed to have bound states below top of potential (Bound state)
-    def nmax(self,l,Emin):
-        return nmax_cache(l,Emin,self.mu,self.V0,self.radius)
+    def nmax(self,l,Emin, n = 0):
+        return nmax_cache(l,Emin,self.mu,self.V0,self.radius, n = n)
 
     # Maximum n allowed to have bound states below top of potential. Different than nmaxB.
     def nmaxS(self,l):
