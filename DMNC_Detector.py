@@ -239,7 +239,7 @@ class Detector:
         self.y += self.uy * cap_dist
         self.z += self.uz * cap_dist
         if self.particle_in_det():
-            capture_state, capture_cross_section = key_val_by_weight(self.xsec_dict)
+            capture_state = key_val_by_weight(self.xsec_dict)[0]
             self.capture_locs[(self.x, self.y, self.z, self.time)] = capture_state
         # Max number of iterations to avoid accidental infinite loop
         for i in range(10000):
@@ -286,7 +286,7 @@ class Detector:
             vertex = hp.GenVertex(position)
             q_state = self.capture_locs[location]
             n,l,m = q_state
-            photon_energy = self.rates.EB(n, l)
+            photon_energy = (self.rates.kapS**2 - self.rates.kapB(n, l)**2)/(2*self.rates.mu)
             photon_ct, photon_phi = self.rates.sample_S_ctq_phiq(n,l,m)
             sin = (1 - photon_ct**2)**(0.5)
             DM_px = self.rates.k * self.ux
@@ -309,12 +309,11 @@ class Detector:
                 curr_DM = hp.GenParticle(momentum_DM, self.QBALL_PID, 4)
                 vertex.add_particle_in(curr_DM)
             # For now have a limited range just in case
-            for i in range(10000):
+            for i in range(10000000):
                 if n <= 1:
                     break
                 decay_dict = self.rates.Gamma_tot_B(n, l, m)
                 # Can be used to make sure we're below ns time
-                total_decay_rate = sum_dict_vals(decay_dict)
                 new_state = key_val_by_weight(decay_dict)[0]
                 new_n, new_l, new_m = new_state
                 photon_energy = self.rates.q(n, l, new_n, new_l)
@@ -338,7 +337,7 @@ class Detector:
                 l = new_l
                 m = new_m
                 
-                if i == 999:
+                if i == 9999999:
                     print('ATTENTION: Did not finish decay. n =', n)
             Argon_capture += 1
             momentum_DM_Ar = hp.FourVector(DM_px,DM_py,DM_pz,DM_e) # NOTICE: ASSUMING PHOTON ENERGY AND MOMENTUM IS NEGLIGIBLE!
