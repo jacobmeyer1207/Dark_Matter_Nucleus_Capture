@@ -11,7 +11,8 @@ import pip
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor
 import traceback
-
+import cProfile
+import pstats
 
 # Functions**********************************************************
 
@@ -110,7 +111,7 @@ def Gen_DM_particle_event():
 
 
 
-def process_one_event(_):
+def process_one_event():
 
     event, energies = Gen_DM_particle_event()
 
@@ -128,14 +129,22 @@ def Capture_stats(n = 1):
     photon_long = 0
     vertecies_long = 0
     energies_long = []
+    '''
     with ProcessPoolExecutor() as executor:
         for result in executor.map(process_one_event, range(n)):
             data_long.extend(result[0])
             photon_long += result[1]
             vertecies_long += result[2]
             energies_long += result [3]
-
-        return data_long, photon_long, vertecies_long, energies_long
+    '''
+    for i in range(n):
+        result = process_one_event()
+        data_long.extend(result[0])
+        photon_long += result[1]
+        vertecies_long += result[2]
+        energies_long += result [3]
+    
+    return data_long, photon_long, vertecies_long, energies_long
 
 def print_event_summary(event):
     #print(event)
@@ -226,9 +235,11 @@ def all_transitions(rates):
         print("l,n,m visited:", parent)
     return photon_energies
 '''
-'''
+
 #Testing for proper rates.xsec_v_tot_s() functionality, plots vs R
 #search for rad_int_s functionality next, implement into one_search below.
+
+
 def one_search(r):
     rates = rts.Rates(R = r)
     x_sec_dict = rates.xsec_v_tot_S()
@@ -241,85 +252,68 @@ def one_search(r):
     return x_sec_dict, xsec_tot
 
 def search_all():
-    searches = [np.arange(10,12,.0005)]
+    searches = [np.arange(1,12,.001)]
     for j in searches:
         with ProcessPoolExecutor() as executor:
             max_cross_section = 0
             max_state_store = ()
             sec_list = []
             sec_len_list = []
-            l_plus_minus = []
-            NS_list = []
-            NB_list = []
-            NS = 0
-            NB = 0
+            n_list = []
+            l_list = []
+            m_list = []
             for R, result in zip(j, executor.map(one_search, j)):
                 rates = rts.Rates(R = R)
-                lpm = 0
                 x_sec_dict, xsec_tot = result
                 max_state = max(x_sec_dict, key=x_sec_dict.get)
-                #l = 1
                 n,l,m = max_state
-                if l > 0:
-                    #n = rates.nmax(l-1, 0)
-                    lminus = rates.rad_int_S(l - 1, n,l)
-                    lpm += lminus * rates.NS(l-1) * rates.NB(n,l)
-                    NS += rates.NS(l-1)
-
-                #n = rates.nmax(l+1, 0)
-                lplus = rates.rad_int_S(l + 1, n,l)
-                lpm += lplus * rates.NS(l+1) * rates.NB(n,l)
-                NS += rates.NS(l+1)
-                NB = rates.NB(n,l)
-                NB_list.append(NB)
-                NS_list.append(NS)
-                l_plus_minus.append(lpm)
                 if max_cross_section < x_sec_dict[max_state]:
                     max_cross_section = x_sec_dict[max_state]
                     max_state_store = max_state
                 sec_list.append(xsec_tot)
                 sec_len_list.append(len(x_sec_dict))
+                n_list.append(n)
+                l_list.append(l)
+                m_list.append(m)
             maxS = max(sec_list)
             print("max cross section:",maxS)
             print("max state:", max_state_store, "cross-section:", max_cross_section)
             print("associated R value:",R)
             print("average cross section:", sum(sec_list)/len(sec_list))
             n,l,m = max_state_store
-            print('max state radial integrals')
-            if l > 0:
-                lminus = rates.rad_int_S(l - 1, n,l)
-                print('l - 1:', lminus)
-                print('normalized l-1:',lminus * rates.NS(l-1) * rates.NB(n,l))
-            lplus = rates.rad_int_S(l + 1, n,l)
-            print('l+1:', lplus)
-            print('normalized l+1:',lplus * rates.NS(l+1) * rates.NB(n,l))
+            print('max state n value:',n,'l value:',l, 'm value:',m)
             plt.plot(j,sec_list,'.')
             plt.yscale('log')
             plt.xlabel('R value')
             plt.ylabel('cross-section total')
-            plt.title("Cross-section VS R from 9 - 11")
+            plt.title(f"Cross-section VS R from {min(j)} - {max(j)}")
             plt.show()
             plt.plot(sec_len_list, sec_list,'.')
             plt.yscale('log')
             plt.xlabel('length of cross section list')
             plt.ylabel('cross-section total')
             plt.show()
-            plt.plot(j, l_plus_minus,'.')
-            plt.yscale('log')
+            plt.plot(j,n_list,'.')
+            plt.title('largest cross section contribution n value v.s. R')
             plt.xlabel('R value')
-            plt.ylabel('l+1 + l-1 normalized wavefunction correlation(max states only)')
+            plt.ylabel('state n value')
             plt.show()
-            plt.plot(j, NB_list,'.')
-            plt.yscale('log')
+            plt.plot(j,l_list,'.')
+            plt.title('largest cross section contribution l value v.s. R')
             plt.xlabel('R value')
-            plt.ylabel('l+1 + l-1 normalized wavefunction correlation(max states only)')
+            plt.ylabel('state l value')
             plt.show()
-            plt.plot(j, NS_list,'.')
-            plt.yscale('log')
+            plt.plot(j,m_list,'.')
+            plt.title('largest cross section contribution m value v.s. R')
             plt.xlabel('R value')
-            plt.ylabel('l+1 + l-1 normalized wavefunction correlation(max states only)')
+            plt.ylabel('state m value')
             plt.show()
-'''
+            plt.plot(j,sec_len_list, '.')
+            plt.title('number of states contributing to the overall cross section V.S. R')
+            plt.xlabel('R value')
+            plt.ylabel('length of contributing cross-sections list')
+            plt.show()
+           
 
 ####Testing methods of sampling angles################################
 #do simple histogram test
@@ -409,7 +403,7 @@ plot_wavefunc(n)
 def main():
 
     ########### Testing block ##############
-    #search_all()
+    search_all()
     '''
     E = []
     rates = rts.Rates()
@@ -421,8 +415,14 @@ def main():
     plt.ylabel('number of photons')
     plt.show()
     '''
+
     ########## Simulation block ############
-    n = 10
+    '''
+    profiler = cProfile.Profile()
+
+    profiler.enable()
+
+    n = 1
     print(pip.__version__) 
     start_time = time.monotonic()
     particle_e_list, photon_num, capture_num, energies_list = Capture_stats(n)
@@ -437,7 +437,15 @@ def main():
     plt.ylabel("Number of Photons")
     plt.title(f"{n} event(s). Photon energies produced:")
     plt.show()
-    
+
+    profiler.disable()
+
+    stats = pstats.Stats(profiler)
+
+    stats.sort_stats("cumtime").print_stats(30)
+    '''
+
+
 
 if __name__ == "__main__":
     main()
