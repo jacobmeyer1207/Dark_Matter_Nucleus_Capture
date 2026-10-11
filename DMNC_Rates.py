@@ -35,7 +35,7 @@ def spherical_ynp(l,x):
 
 def spherical_jnz(l,n):
     if n > 100 and l/n < .1:
-        return (n + l/2) * np.pi
+        return (n + l/2) * np.pi - (l*(l+1))/(2*(n+1/2)*np.pi)
     else:
         return spherical_jnz_full(l,n)
 
