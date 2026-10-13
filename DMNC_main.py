@@ -403,7 +403,7 @@ plot_wavefunc(n)
 def main():
 
     ########### Testing block ##############
-    search_all()
+    #search_all()
     '''
     E = []
     rates = rts.Rates()
@@ -417,7 +417,7 @@ def main():
     '''
 
     ########## Simulation block ############
-    '''
+    
     profiler = cProfile.Profile()
 
     profiler.enable()
@@ -443,7 +443,7 @@ def main():
     stats = pstats.Stats(profiler)
 
     stats.sort_stats("cumtime").print_stats(30)
-    '''
+    
 
 
 
